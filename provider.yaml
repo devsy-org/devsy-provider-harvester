@@ -1,0 +1,129 @@
+name: harvester
+version: v1.0.0
+description: Devsy on Harvester
+icon: harvester.svg
+
+options:
+  HARVESTER_KUBECTL_PATH:
+    description: Path to kubectl (use an absolute path when Desktop does not inherit your shell PATH).
+  KUBECONFIG:
+    description: Path to the Harvester kubeconfig.
+    required: true
+  HARVESTER_CONTEXT:
+    description: Optional kubeconfig context for the Harvester cluster.
+  HARVESTER_NAMESPACE:
+    description: Namespace for the VirtualMachine resource.
+    default: default
+  HARVESTER_NETWORK:
+    description: Existing Harvester VM network attachment (NAMESPACE/NAME or NAME in the VM namespace). Choose a network reachable from the Devsy client; empty uses the cluster pod network.
+  HARVESTER_IMAGE:
+    description: Legacy image value retained only for migration into the image selector.
+    hidden: true
+  HARVESTER_IMAGE_NAMESPACE:
+    description: Namespace containing the Harvester image.
+    default: harvester-public
+  HARVESTER_IMAGE_CATALOG:
+    description: Image catalog connection context, managed by the provider.
+    hidden: true
+    cache: 0s
+    command: 'printf "%s" "${KUBECONFIG}|${HARVESTER_CONTEXT}|${HARVESTER_IMAGE_NAMESPACE}|${HARVESTER_KUBECTL_PATH}"'
+    subOptionsCommand: ${HARVESTER_PROVIDER} image-options
+  HARVESTER_IMAGE_PIN:
+    description: Saved catalog selection, managed by the provider.
+    hidden: true
+    cache: 0s
+    command: 'printf "%s" "${HARVESTER_IMAGE_CHOICE}"; : "${HARVESTER_IMAGE_CATALOG}"'
+  HARVESTER_IMAGE_SELECTION_MODE:
+    description: Image selection migration state, managed by the provider.
+    hidden: true
+    cache: 0s
+    command: 'printf catalog; : "${HARVESTER_IMAGE_PIN}"'
+  HARVESTER_IMAGE_TYPE:
+    description: Image attachment type.
+    default: raw
+    suggestions: [raw, qcow2, iso]
+  HARVESTER_STORAGE_CLASS:
+    description: Storage class for the writable root disk when using an ISO image.
+  HARVESTER_CPU:
+    description: VM CPU cores.
+    default: "4"
+  HARVESTER_MEMORY:
+    description: VM memory request.
+    default: 8Gi
+  HARVESTER_DISK:
+    description: Root disk size.
+    default: 40Gi
+  HARVESTER_SSH_HOST:
+    description: Optional fixed SSH host. If omitted, Devsy discovers the VM IP from Harvester.
+  HARVESTER_SSH_USER:
+    description: SSH user inside the VM.
+    default: ubuntu
+  HARVESTER_SSH_PORT:
+    description: SSH port inside the VM.
+    default: "22"
+  HARVESTER_SSH_FLAGS:
+    description: Additional SSH flags.
+  HARVESTER_SSH_PUBLIC_KEY:
+    description: SSH public key to inject through cloud-init.
+  HARVESTER_CLOUD_INIT_PROFILE:
+    description: Opt-in Ubuntu 24.04 Docker bootstrap for a fresh Ubuntu cloud image. Requires a public SSH key; mutually exclusive with other complete cloud-init sources.
+    suggestions: [ubuntu-24.04-docker-v1]
+  HARVESTER_CLOUD_INIT_TEMPLATE:
+    description: Harvester cloud-init ConfigMap reference (NAMESPACE/NAME or NAME in the VM namespace). Reads data.cloudInit using this provider kubeconfig/context.
+  HARVESTER_USER_DATA_FILE:
+    description: Local cloud-init file path on the client running Devsy (use an absolute Windows path on Windows).
+  HARVESTER_USER_DATA:
+    description: Optional complete cloud-init user-data, overriding the generated SSH setup.
+    password: true
+agent:
+  path: /opt/devsy/agent
+  driver: docker
+  inactivityTimeout: 30m
+  exec:
+    shutdown: sudo -n shutdown -h now || shutdown -h now
+exec:
+  init: ${HARVESTER_PROVIDER} init
+  command: ${HARVESTER_PROVIDER} command --command "${COMMAND}"
+  create: ${HARVESTER_PROVIDER} create
+  delete: ${HARVESTER_PROVIDER} delete
+  start: ${HARVESTER_PROVIDER} start
+  stop: ${HARVESTER_PROVIDER} stop
+  status: ${HARVESTER_PROVIDER} status
+binaries:
+  KUBECTL:
+    - os: linux
+      arch: amd64
+      path: https://dl.k8s.io/release/v1.35.0/bin/linux/amd64/kubectl
+      checksum: a2e984a18a0c063279d692533031c1eff93a262afcc0afdc517375432d060989
+    - os: linux
+      arch: arm64
+      path: https://dl.k8s.io/release/v1.35.0/bin/linux/arm64/kubectl
+      checksum: 58f82f9fe796c375c5c4b8439850b0f3f4d401a52434052f2df46035a8789e25
+    - os: darwin
+      arch: amd64
+      path: https://dl.k8s.io/release/v1.35.0/bin/darwin/amd64/kubectl
+      checksum: 2447cb78911b10a667202b078eeb30541ec78d1280c3682921dc81607e148d96
+    - os: darwin
+      arch: arm64
+      path: https://dl.k8s.io/release/v1.35.0/bin/darwin/arm64/kubectl
+      checksum: cf699c56340dc775230fde4ef84237d27563ea6ef52164c7d078072b586c3918
+    - os: windows
+      arch: amd64
+      path: https://dl.k8s.io/release/v1.35.0/bin/windows/amd64/kubectl.exe
+      checksum: 4c5d14b8673bd55f813a8965ad70d5150e3960ee5f274025e2286aea3a0fa8b6
+  HARVESTER_PROVIDER:
+    - os: linux
+      arch: amd64
+      path: https://github.com/devsy-org/devsy-provider-harvester/releases/download/v1.0.0/harvester-provider-linux-amd64
+    - os: linux
+      arch: arm64
+      path: https://github.com/devsy-org/devsy-provider-harvester/releases/download/v1.0.0/harvester-provider-linux-arm64
+    - os: darwin
+      arch: amd64
+      path: https://github.com/devsy-org/devsy-provider-harvester/releases/download/v1.0.0/harvester-provider-darwin-amd64
+    - os: darwin
+      arch: arm64
+      path: https://github.com/devsy-org/devsy-provider-harvester/releases/download/v1.0.0/harvester-provider-darwin-arm64
+    - os: windows
+      arch: amd64
+      path: https://github.com/devsy-org/devsy-provider-harvester/releases/download/v1.0.0/harvester-provider-windows-amd64.exe
