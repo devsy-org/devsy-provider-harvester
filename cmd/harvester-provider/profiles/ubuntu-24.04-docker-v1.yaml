@@ -1,0 +1,54 @@
+#cloud-config
+hostname: {{quote .VMName}}
+manage_etc_hosts: true
+ssh_pwauth: false
+groups: [docker]
+users:
+  - name: {{quote .SSHUser}}
+    lock_passwd: true
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    groups: [docker]
+    ssh_authorized_keys:
+      - {{quote .SSHPublicKey}}
+write_files:
+  - path: /usr/local/sbin/devsy-docker-bootstrap
+    owner: root:root
+    permissions: '0700'
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      stage=platform
+      trap 'echo "devsy bootstrap failed at ${stage}; inspect /var/log/cloud-init-output.log" >&2' ERR
+      . /etc/os-release
+      if [[ "$ID" != ubuntu || "$VERSION_ID" != 24.04 ]]; then
+        echo 'devsy bootstrap requires an Ubuntu 24.04 cloud image' >&2
+        exit 1
+      fi
+      export DEBIAN_FRONTEND=noninteractive
+      stage=prerequisites
+      echo "devsy bootstrap: $stage"
+      apt-get -o DPkg::Lock::Timeout=120 -o Acquire::Retries=3 update
+      apt-get -o DPkg::Lock::Timeout=120 -y install ca-certificates curl qemu-guest-agent
+      stage=docker-repository
+      echo "devsy bootstrap: $stage"
+      install -m 0755 -d /etc/apt/keyrings
+      curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 --max-time 120 https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+      chmod a+r /etc/apt/keyrings/docker.asc
+      printf 'Types: deb\nURIs: https://download.docker.com/linux/ubuntu\nSuites: noble\nComponents: stable\nArchitectures: %s\nSigned-By: /etc/apt/keyrings/docker.asc\n' "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/docker.sources
+      stage=docker-packages
+      echo "devsy bootstrap: $stage"
+      apt-get -o DPkg::Lock::Timeout=120 -o Acquire::Retries=3 update
+      apt-get -o DPkg::Lock::Timeout=120 -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+      stage=services
+      echo "devsy bootstrap: $stage"
+      systemctl enable --now docker
+      # Ubuntu's guest-agent unit can be static; starting it is sufficient.
+      systemctl start qemu-guest-agent
+      usermod -aG docker {{.SSHUser}}
+      docker info >/dev/null
+      docker compose version >/dev/null
+      docker buildx version >/dev/null
+      echo 'devsy bootstrap: complete'
+runcmd:
+  - [timeout, '--kill-after=30', '840', /usr/local/sbin/devsy-docker-bootstrap]

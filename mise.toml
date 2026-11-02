@@ -1,0 +1,45 @@
+[settings]
+experimental = true
+lockfile = true
+lockfile_platforms = ["linux-x64", "macos-arm64"]
+
+[tool_config]
+locked = true
+
+[tools]
+go = "1.27.0"
+golangci-lint = "2.15.0"
+prek = "0.5.9"
+
+[tasks.setup]
+depends = ["setup:dependencies", "setup:hooks"]
+
+[tasks."setup:dependencies"]
+run = "go mod download"
+
+[tasks."setup:hooks"]
+run = "prek install"
+
+[tasks.test]
+run = '''
+go test -race ./...
+go vet ./...
+'''
+
+[tasks.lint]
+run = '''
+golangci-lint run ./...
+golangci-lint fmt --diff
+'''
+
+[tasks.format]
+run = "golangci-lint fmt"
+
+[tasks.build]
+run = '''
+mkdir -p dist
+go build -o dist/harvester-provider ./cmd/harvester-provider
+'''
+
+[tasks.pre-commit]
+run = "prek run --all-files"

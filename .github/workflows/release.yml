@@ -1,0 +1,78 @@
+name: release
+on:
+  push:
+    tags: ["v*.*.*"]
+permissions:
+  contents: write
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27"
+          cache: false
+      - name: Test Windows helper
+        shell: pwsh
+        run: |
+          go test ./... -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go vet ./...
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go build -o harvester-provider.exe ./cmd/harvester-provider
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $output = & ./harvester-provider.exe unsupported-operation 2>&1
+          if ($LASTEXITCODE -ne 2 -or "$output" -notmatch "usage: harvester-provider") { throw "Windows executable smoke test failed: $output" }
+          Write-Output "Native Windows amd64 helper smoke test passed"
+          exit 0
+  release:
+    needs: windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27"
+          cache: false
+      - name: Build binaries
+        run: |
+          mkdir -p dist
+          go test ./...
+          go vet ./...
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            os=${target%/*}; arch=${target#*/}
+            suffix=""; if [ "$os" = windows ]; then suffix=".exe"; fi
+            GOOS=$os GOARCH=$arch go build -trimpath -ldflags='-s -w' -o "dist/harvester-provider-$os-$arch$suffix" ./cmd/harvester-provider
+          done
+          go run ./hack/package-release "$GITHUB_REF_NAME"
+          (cd dist && sha256sum -c checksums.txt)
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          files: |
+            dist/harvester-provider-*
+            dist/checksums.txt
+            dist/provider.yaml
+            harvester.svg
+  windows-install:
+    needs: release
+    runs-on: windows-latest
+    steps:
+      - name: Install public provider and managed kubectl on Windows
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://github.com/devsy-org/devsy/releases/download/v1.26.0/devsy-windows-amd64.exe -OutFile devsy.exe
+          $homeDir = Join-Path $env:RUNNER_TEMP "harvester-install"
+          $manifest = "https://github.com/devsy-org/devsy-provider-harvester/releases/download/$env:GITHUB_REF_NAME/provider.yaml"
+          & ./devsy.exe provider add $manifest --use=false --home $homeDir
+          if ($LASTEXITCODE -ne 0) { throw "Windows provider install failed" }
+          $kubectl = Get-ChildItem $homeDir -Recurse -Filter kubectl.exe | Select-Object -First 1
+          if (-not $kubectl) { throw "Managed kubectl.exe was not downloaded" }
+          & $kubectl.FullName version --client
+          if ($LASTEXITCODE -ne 0) { throw "Managed kubectl.exe did not run" }
+          $helper = Get-ChildItem $homeDir -Recurse -Filter harvester-provider-windows-amd64.exe | Select-Object -First 1
+          if (-not $helper) { throw "Windows provider helper was not downloaded" }
+          & $helper.FullName unsupported-operation
+          if ($LASTEXITCODE -ne 2) { throw "Downloaded provider helper did not run" }
+          Write-Output "WINDOWS_PROVIDER_INSTALL_AND_MANAGED_KUBECTL_OK"
+          exit 0
