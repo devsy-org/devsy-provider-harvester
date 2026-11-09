@@ -26,6 +26,8 @@ var errSSHAuthentication = errors.New("SSH authentication failed; check HARVESTE
 
 var errEngineMissing = errors.New("selected container runtime is not installed in the guest")
 
+var errEngineMismatch = errors.New("guest executable reports a different container runtime; check HARVESTER_CONTAINER_COMMAND")
+
 var errEngineAccess = errors.New("selected container runtime is not accessible to the SSH user; check its service and user permissions")
 
 var errBootstrapPrivilege = errors.New("bundled bootstrap needs passwordless sudo to inspect cloud-init status")
@@ -36,7 +38,7 @@ type config struct {
 	CPU, Memory, Disk, Network                                  string
 	SSHHost, SSHUser, SSHPort, SSHFlags, SSHPublicKey           string
 	SSHMode, SSHKeyPath, ManagedSSHDir, ManagedSlot             string
-	ManagedFingerprint, ContainerRuntime                        string
+	ManagedFingerprint, ContainerRuntime, ContainerCommand      string
 	UserData, UserDataFile, CloudInitTemplate, CloudInitProfile string
 	ExpectedVMUID, ExpectedRootDiskUID                          string
 }
@@ -48,7 +50,7 @@ func env(n, fallback string) string {
 	return fallback
 }
 func load() config {
-	return config{
+	c := config{
 		Kubeconfig:          env("KUBECONFIG", ""),
 		Context:             os.Getenv("HARVESTER_CONTEXT"),
 		Namespace:           env("HARVESTER_NAMESPACE", "default"),
@@ -74,9 +76,12 @@ func load() config {
 		SSHKeyPath:          os.Getenv("HARVESTER_SSH_KEY_PATH"),
 		ManagedSSHDir:       os.Getenv("HARVESTER_MANAGED_SSH_DIR"),
 		ContainerRuntime:    env("HARVESTER_CONTAINER_RUNTIME", "docker"),
+		ContainerCommand:    os.Getenv("HARVESTER_CONTAINER_COMMAND"),
 		ExpectedVMUID:       os.Getenv("HARVESTER_EXPECTED_VM_UID"),
 		ExpectedRootDiskUID: os.Getenv("HARVESTER_EXPECTED_ROOTDISK_UID"),
 	}
+	c.ContainerCommand = runtimeCommand(c)
+	return c
 }
 
 func progress(message string) {
@@ -415,6 +420,7 @@ func createJSON(c config, object any) error {
 	return cmd.Run()
 }
 func apply(c config) error {
+	c.ContainerCommand = runtimeCommand(c)
 	if err := validateSSHOptions(c); err != nil {
 		return err
 	}
@@ -455,6 +461,7 @@ func apply(c config) error {
 }
 
 func reuseExistingVM(c *config) (bool, error) {
+	c.ContainerCommand = runtimeCommand(*c)
 	out, err := kubectl(*c, "get", "virtualmachine", c.VMName, "-n", c.Namespace, "-o", "json", "--ignore-not-found")
 	if err != nil {
 		return false, err
@@ -658,6 +665,8 @@ func readinessDiagnostic(err error) string {
 		return errSSHAuthentication.Error() + "; retrying while cloud-init may still be configuring access"
 	case errors.Is(err, errEngineMissing):
 		return errEngineMissing.Error() + "; waiting for bootstrap"
+	case errors.Is(err, errEngineMismatch):
+		return errEngineMismatch.Error() + "; retrying"
 	case errors.Is(err, errEngineAccess):
 		return errEngineAccess.Error() + "; retrying"
 	case errors.Is(err, errBootstrapPrivilege):
@@ -675,7 +684,12 @@ func probeGuest(ctx context.Context, c config, host string) error {
 		return err
 	}
 	engine := containerRuntime(c)
-	probe := "command -v " + engine + " >/dev/null 2>&1 || exit 43; " + engine + " info >/dev/null 2>&1 || exit 44"
+	commandWord := quoteGuestWord(runtimeCommand(c))
+	pattern := "[Dd]ocker*"
+	if engine == "podman" {
+		pattern = "[Pp]odman*"
+	}
+	probe := "command -v " + commandWord + " >/dev/null 2>&1 || exit 43; case \"$(" + commandWord + " --version 2>/dev/null)\" in " + pattern + ") ;; *) exit 46;; esac; " + commandWord + " info >/dev/null 2>&1 || exit 44"
 	if c.CloudInitProfile != "" {
 		// A terminal bootstrap error must be visible even when Docker was never
 		// installed. Use only a reserved exit code, never guest log contents.
@@ -707,6 +721,8 @@ func probeGuest(ctx context.Context, c config, host string) error {
 				if c.CloudInitProfile != "" {
 					diagnostic = errBootstrapPrivilege
 				}
+			case 46:
+				diagnostic = errEngineMismatch
 			}
 			if diagnostic != nil {
 				if c.CloudInitProfile == "" {
@@ -846,9 +862,6 @@ func sshHostKeyAlias(ctx context.Context, c config) (string, error) {
 }
 
 func sshExecCommand(c config, host, hostKeyAlias, command string) *exec.Cmd {
-	if containerRuntime(c) == "podman" {
-		command = `export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"; export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"; ` + command
-	}
 	args := []string{"-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-o", "HostKeyAlias=" + hostKeyAlias, "-o", "CheckHostIP=no", "-p", c.SSHPort}
 	if c.SSHKeyPath != "" {
 		args = append(args, "-i", c.SSHKeyPath, "-o", "IdentitiesOnly=yes")
@@ -1043,6 +1056,13 @@ func main() {
 	}
 	var err error
 	switch op {
+	case "runtime-command":
+		if containerRuntime(c) != "docker" && containerRuntime(c) != "podman" {
+			err = errors.New("HARVESTER_CONTAINER_RUNTIME must be docker or podman")
+		} else {
+			fmt.Print(defaultRuntimeCommand(c))
+			return
+		}
 	case "image-options":
 		err = printImageOptions(c, os.Stdout)
 	case "images":

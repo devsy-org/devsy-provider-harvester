@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 
 class AcceptanceTests(unittest.TestCase):
-    def exercise(self, replacement=False, empty_engine=False, assert_hermetic=False):
+    def exercise(self, replacement=False, empty_engine=False, assert_hermetic=False, wrong_mode=False):
         spec = importlib.util.spec_from_file_location("verification", Path(__file__).with_name("verify-managed-harvester.py"))
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
@@ -30,9 +30,11 @@ class AcceptanceTests(unittest.TestCase):
                         leaked.extend(key for key in ["HARVESTER_SSH_HOST", "DEVSY_AGENT_URL"] if key in env)
                     name = env["HARVESTER_VM_NAME"]
                     key = artifacts / "managed keys" / "slot" / "id_rsa"
-                    if label == "workspace-up":
+                    if label == "runtime-command":
+                        stdout.write("/usr/local/bin/devsy-podman-rootful")
+                    elif label == "workspace-up":
                         metadata = {"name": name, "uid": "original-vm", "labels": {"devsy.sh/provider": "harvester", "devsy.sh/machine-id": name},
-                                    "annotations": {"devsy.sh/ssh-mode": "managed", "devsy.sh/ssh-fingerprint": "SHA256:matching"}}
+                                    "annotations": {"devsy.sh/ssh-mode": "managed", "devsy.sh/ssh-fingerprint": "SHA256:matching", "devsy.sh/container-command": "/usr/local/bin/devsy-podman-rootful"}}
                         state[name] = {"metadata": metadata, "spec": {"template": {"spec": {"domain": {"cpu": {"cores": 2}, "memory": {"guest": "2Gi"}}}}}}
                         state[name + "-rootdisk"] = {"metadata": {**metadata, "name": name + "-rootdisk", "uid": "original-pvc"}}
                         key.parent.mkdir(parents=True)
@@ -41,13 +43,15 @@ class AcceptanceTests(unittest.TestCase):
                         stdout.write("CONTAINER_PROOF_OK\n")
                     elif label == "guest-runtime":
                         stdout.write("GUEST_UID=1000\nstatus: done\nFREE_KIB=8388608\n")
-                    elif label == "engine-container-ownership":
+                    elif label == "vm-daemon":
+                        stdout.write("DAEMON_ACTIVE\n")
+                    elif label in ("engine-container-ownership", "engine-container-reopen"):
                         if empty_engine:
                             self.returncode = 1
                         else:
                             stdout.write("ENGINE_CONTAINER_ID=" + "a" * 12 + "\n")
-                    elif label == "podman-rootless":
-                        stdout.write("true\n")
+                    elif label == "podman-engine-mode":
+                        stdout.write(json.dumps({"host": {"security": {"rootless": wrong_mode}}, "store": {"graphRoot": "/var/lib/containers/storage", "runRoot": "/run/containers/storage"}, "version": {"Version": "test"}}))
                     elif label == "missing-key-refused":
                         self.returncode = 1
                         if replacement:
@@ -67,7 +71,7 @@ class AcceptanceTests(unittest.TestCase):
 
             def output(command, **kwargs):
                 if command[0] == "yq":
-                    return "{}"
+                    return json.dumps({"agent": {"inactivityTimeout": "30m", "exec": {"shutdown": "sudo -n shutdown -h now"}}})
                 if command[0] == "which":
                     return "/not-executed/kubectl\n"
                 if command[0] == "ssh-keygen":
@@ -112,6 +116,11 @@ class AcceptanceTests(unittest.TestCase):
             receipt, _, failure = self.exercise(assert_hermetic=True)
         self.assertIsNone(failure)
         self.assertEqual(receipt.get("result"), "passed")
+
+    def test_unexpected_engine_scope_is_not_reported_as_rootful(self):
+        receipt, _, failure = self.exercise(wrong_mode=True)
+        self.assertIsNotNone(failure)
+        self.assertNotEqual(receipt.get("result"), "passed")
 
 
 if __name__ == "__main__":

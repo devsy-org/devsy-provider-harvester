@@ -22,12 +22,12 @@ var ubuntuDockerProfile string
 //go:embed profiles/rocky-9-podman-v1.yaml
 var rockyPodmanProfile string
 
-type bootstrapProfile struct{ Runtime, UserData string }
+type bootstrapProfile struct{ Runtime, Command, UserData string }
 
 func bootstrapProfiles() map[string]bootstrapProfile {
 	return map[string]bootstrapProfile{
-		"ubuntu-24.04-docker-v1": {Runtime: "docker", UserData: ubuntuDockerProfile},
-		"rocky-9-podman-v1":      {Runtime: "podman", UserData: rockyPodmanProfile},
+		"ubuntu-24.04-docker-v1": {Runtime: "docker", Command: "docker", UserData: ubuntuDockerProfile},
+		"rocky-9-podman-v1":      {Runtime: "podman", Command: rootfulPodmanCommand, UserData: rockyPodmanProfile},
 	}
 }
 
@@ -38,6 +38,9 @@ func validateBundledProfile(c config, requireKey bool) (bootstrapProfile, error)
 	}
 	if containerRuntime(c) != profile.Runtime {
 		return bootstrapProfile{}, errors.New("selected bootstrap profile requires its matching HARVESTER_CONTAINER_RUNTIME")
+	}
+	if runtimeCommand(c) != profile.Command {
+		return bootstrapProfile{}, errors.New("selected bootstrap profile requires its original runtime executable")
 	}
 	if c.SSHUser == "root" || !regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`).MatchString(c.SSHUser) {
 		return bootstrapProfile{}, errors.New("bundled profile requires a valid non-root HARVESTER_SSH_USER")
@@ -56,7 +59,10 @@ func renderBundledProfile(c config) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	t, err := template.New("bootstrap").Funcs(template.FuncMap{"quote": strconv.Quote}).Parse(profile.UserData)
+	t, err := template.New("bootstrap").Funcs(template.FuncMap{
+		"quote": strconv.Quote, "indent": indentGuestScript,
+		"podmanWrapper": podmanWrapperScript, "podmanCommand": func() string { return rootfulPodmanCommand },
+	}).Parse(profile.UserData)
 	if err != nil {
 		return "", errors.New("invalid embedded cloud-init profile")
 	}

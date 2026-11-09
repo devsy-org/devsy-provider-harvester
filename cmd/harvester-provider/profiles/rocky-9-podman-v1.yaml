@@ -10,6 +10,11 @@ users:
     ssh_authorized_keys:
       - {{quote .SSHPublicKey}}
 write_files:
+  - path: {{quote (podmanCommand)}}
+    owner: root:root
+    permissions: '0755'
+    content: |
+{{podmanWrapper | indent 6}}
   - path: /usr/local/sbin/devsy-podman-bootstrap
     owner: root:root
     permissions: '0700'
@@ -25,14 +30,13 @@ write_files:
       fi
       stage=podman-packages
       echo "devsy bootstrap: $stage"
-      dnf -y --setopt=retries=3 install podman qemu-guest-agent slirp4netns fuse-overlayfs
-      stage=user-session
+      dnf -y --setopt=retries=3 install podman qemu-guest-agent sudo
+      stage=runtime-readiness
       echo "devsy bootstrap: $stage"
-      loginctl enable-linger {{.SSHUser}}
-      guest_uid=$(id -u {{.SSHUser}})
-      systemctl start "user@${guest_uid}.service"
       systemctl start qemu-guest-agent
-      runuser -u {{.SSHUser}} -- env XDG_RUNTIME_DIR="/run/user/${guest_uid}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${guest_uid}/bus" podman info >/dev/null
+      test "$(stat -c %u /usr/local/bin)" = 0
+      test "$(find /usr/local/bin -maxdepth 0 -perm /022 -print)" = ''
+      {{podmanCommand}} info >/dev/null
       echo 'devsy bootstrap: complete'
 runcmd:
   - [timeout, '--kill-after=30', '840', /usr/local/sbin/devsy-podman-bootstrap]

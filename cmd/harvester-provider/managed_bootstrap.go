@@ -18,6 +18,7 @@ const (
 	managedFingerprintAnnotation = "devsy.sh/ssh-fingerprint"
 	managedUserAnnotation        = "devsy.sh/ssh-user"
 	managedRuntimeAnnotation     = "devsy.sh/container-runtime"
+	managedCommandAnnotation     = "devsy.sh/container-command"
 	managedDigestAnnotation      = "devsy.sh/cloud-init-sha256"
 	profileAnnotation            = "devsy.sh/cloud-init-profile"
 	managedPublicKeyMarker       = "{{HARVESTER_SSH_PUBLIC_KEY}}"
@@ -36,6 +37,9 @@ func validateSSHOptions(c config) error {
 	}
 	if containerRuntime(c) != "docker" && containerRuntime(c) != "podman" {
 		return errors.New("HARVESTER_CONTAINER_RUNTIME must be docker or podman")
+	}
+	if strings.TrimSpace(runtimeCommand(c)) == "" || strings.ContainsRune(runtimeCommand(c), 0) || strings.HasPrefix(runtimeCommand(c), "-") {
+		return errors.New("HARVESTER_CONTAINER_COMMAND must name a guest executable, not command-line options")
 	}
 	flags, err := splitSSHFlags(c.SSHFlags)
 	if err != nil {
@@ -240,7 +244,8 @@ func managedAnnotations(c config) map[string]string {
 	return map[string]string{
 		managedModeAnnotation: "managed", managedFingerprintAnnotation: c.ManagedFingerprint,
 		managedUserAnnotation: c.SSHUser, managedRuntimeAnnotation: containerRuntime(c),
-		profileAnnotation: c.CloudInitProfile, managedDigestAnnotation: hex.EncodeToString(digest[:]),
+		managedCommandAnnotation: runtimeCommand(c),
+		profileAnnotation:        c.CloudInitProfile, managedDigestAnnotation: hex.EncodeToString(digest[:]),
 	}
 }
 
@@ -279,6 +284,7 @@ func restoreManagedSSH(ctx context.Context, c *config, meta metadata) error {
 }
 
 func sshConnection(ctx context.Context, c config) (config, string, error) {
+	c.ContainerCommand = runtimeCommand(c)
 	if c.SSHMode != "managed" {
 		alias, err := sshHostKeyAlias(ctx, c)
 		return c, alias, err

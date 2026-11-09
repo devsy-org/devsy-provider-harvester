@@ -52,6 +52,7 @@ def main():
     devsy = ["devsy", "--home", str(home), "--log-level", "info", "--log-output", "text"]
     receipt = {"vm_name": name, "runtime": args.runtime, "profile": args.profile, "container_image": args.container_image,
                "budget": {"cpu": 2, "memory": "2Gi", "disk": "12Gi"}, "helper_sha256": hashlib.sha256(args.helper.read_bytes()).hexdigest(), "resources": {}}
+    selected_command = None
 
     def save():
         (root / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
@@ -72,6 +73,8 @@ def main():
             meta = obj["metadata"]
             if meta.get("labels", {}).get("devsy.sh/provider") != "harvester" or meta.get("labels", {}).get("devsy.sh/machine-id") != name or meta.get("annotations", {}).get("devsy.sh/ssh-mode") != "managed":
                 raise RuntimeError("task resource does not have the expected managed ownership")
+            if selected_command is not None and meta.get("annotations", {}).get("devsy.sh/container-command") != selected_command:
+                raise RuntimeError("provider and verifier resolved different runtime commands")
             receipt["resources"][resource_name] = {"kind": kind, "uid": meta["uid"], "annotations": meta.get("annotations", {})}
             if kind == "vm":
                 domain = obj["spec"]["template"]["spec"]["domain"]
@@ -111,6 +114,8 @@ def main():
     save()
     manifest = json.loads(subprocess.check_output(["yq", "-o=json", ".", str(Path(__file__).resolve().parents[1] / "provider.yaml")], text=True))
     manifest["name"] = "harvester-managed-proof"
+    receipt["inactivity_timeout"] = manifest["agent"].get("inactivityTimeout")
+    receipt["shutdown_configured"] = bool(manifest["agent"].get("exec", {}).get("shutdown"))
     arch = {"x86_64": "amd64", "aarch64": "arm64"}[platform.machine()]
     kubectl_path = subprocess.check_output(["which", "kubectl"], text=True).strip()
     manifest["binaries"] = {"HARVESTER_PROVIDER": [{"os": "linux", "arch": arch, "path": str(args.helper.resolve())}],
@@ -138,6 +143,12 @@ def main():
             env.update(original)
 
     try:
+        _, command_output = helper_command("runtime-command", "runtime-command", timeout=10)
+        selected_command = command_output.strip()
+        if not selected_command or "\n" in selected_command:
+            raise RuntimeError("runtime command selector did not return one executable")
+        engine = shlex.quote(selected_command)
+        receipt["runtime_command"] = selected_command
         add = devsy + ["provider", "add", str(provider_file), "--name", "harvester-managed-proof"]
         for key, value in options.items():
             add += ["-o", key + "=" + value]
@@ -151,24 +162,25 @@ def main():
         fixture = root / "fixture"
         (fixture / ".devcontainer").mkdir(parents=True)
         (fixture / "proof.txt").write_text(name + "\n")
-        (fixture / ".devcontainer" / "devcontainer.json").write_text(json.dumps({"image": args.container_image, "postCreateCommand": "printf '%s' " + shlex.quote(name) + " > /tmp/managed-post-create"}))
+        (fixture / ".devcontainer" / "devcontainer.json").write_text(json.dumps({"image": args.container_image, "remoteUser": "root", "postCreateCommand": "printf '%s' " + shlex.quote(name) + " > /tmp/managed-post-create"}))
         run("workspace-up", devsy + ["workspace", "up", str(fixture), "--provider", "harvester-managed-proof", "--id", workspace, "--ide", "none", "--ide-launch", "skip", "--ssh-configure=false"], timeout=1200, observe=True)
         capture()
         if len(receipt["resources"]) != 2:
             raise RuntimeError("missing VM/PVC identity receipts")
         receipt["devsy_version"] = subprocess.check_output(["devsy", "--version"], text=True).strip()
         marker_check = 'test "$(cat /tmp/managed-post-create)" = ' + shlex.quote(name)
-        _, proof = run("container-exec", devsy + ["workspace", "ssh", workspace, "--agent-forwarding=false", "--start-services=false", "--command", marker_check + ' && test "$(cat proof.txt)" = ' + shlex.quote(name) + " && printf 'CONTAINER_PROOF_OK\\n'"], timeout=180)
+        _, proof = run("container-exec", devsy + ["workspace", "ssh", workspace, "--agent-forwarding=false", "--start-services=false", "--command", marker_check + ' && test "$(cat proof.txt)" = ' + shlex.quote(name) + " && printf '%s' " + shlex.quote(name) + ' > acceptance-write.txt && test "$(cat acceptance-write.txt)" = ' + shlex.quote(name) + " && printf 'CONTAINER_PROOF_OK\\n'"], timeout=180)
         if "CONTAINER_PROOF_OK" not in proof:
             raise RuntimeError("actual devcontainer execution proof missing")
         receipt["container_exec"] = "passed"
-        ownership_command = 'for candidate in $(' + args.runtime + ' ps -q); do ' + args.runtime + ' exec "$candidate" sh -c ' + shlex.quote(marker_check) + ' >/dev/null 2>&1 && { printf "ENGINE_CONTAINER_ID=%s\\n" "$candidate"; exit 0; }; done; exit 1'
+        receipt["workspace_read_write"] = "passed"
+        ownership_command = 'for candidate in $(' + engine + ' ps -q); do ' + engine + ' exec --user root "$candidate" sh -c ' + shlex.quote(marker_check) + ' >/dev/null 2>&1 && { printf "ENGINE_CONTAINER_ID=%s\\n" "$candidate"; exit 0; }; done; exit 1'
         _, ownership = helper_command("engine-container-ownership", "command", ownership_command)
         container_id = re.search(r"(?m)^ENGINE_CONTAINER_ID=([a-f0-9]{12,64})$", ownership)
         if container_id is None:
             raise RuntimeError("selected runtime did not prove ownership of Devsy's actual container")
         receipt["engine_container_id"] = container_id[1]
-        _, guest = helper_command("guest-runtime", "command", "printf 'GUEST_UID=%s\\n' \"$(id -u)\"; sudo -n cloud-init status; " + args.runtime + " ps --format '{{.ID}} {{.Image}}'; printf 'FREE_KIB='; df -Pk / | awk 'NR==2 {print $4}'")
+        _, guest = helper_command("guest-runtime", "command", "printf 'GUEST_UID=%s\\n' \"$(id -u)\"; sudo -n cloud-init status; " + engine + " ps --format '{{.ID}} {{.Image}}'; printf 'FREE_KIB='; df -Pk / | awk 'NR==2 {print $4}'")
         guest_uid = re.search(r"(?m)^GUEST_UID=([0-9]+)$", guest)
         free_space = re.search(r"(?m)^FREE_KIB=([0-9]+)$", guest)
         if guest_uid is None or int(guest_uid[1]) == 0:
@@ -177,11 +189,22 @@ def main():
             raise RuntimeError("guest disk has less than 512 MiB available after devcontainer startup")
         receipt["guest_uid"], receipt["free_kib"] = int(guest_uid[1]), int(free_space[1])
         receipt["guest_summary"] = guest.strip()
+        _, daemon = helper_command("vm-daemon", "command", "sudo -n systemctl is-active --quiet devsy.service && printf 'DAEMON_ACTIVE\\n'")
+        if "DAEMON_ACTIVE" not in daemon or receipt["inactivity_timeout"] != "30m" or not receipt["shutdown_configured"]:
+            raise RuntimeError("VM daemon or saved inactivity configuration was not preserved")
+        receipt["vm_daemon_active"] = True
         if args.runtime == "podman":
-            _, rootless = helper_command("podman-rootless", "command", "podman info --format '{{.Host.Security.Rootless}}'")
-            if rootless.strip() != "true":
-                raise RuntimeError("Podman devcontainer was not proved rootless")
-            receipt["rootless"] = True
+            _, info_output = helper_command("podman-engine-mode", "command", engine + " info --format json")
+            try:
+                info, _ = json.JSONDecoder().raw_decode(info_output[info_output.index("{"):])
+                rootless = info["host"]["security"]["rootless"]
+                store = info["store"]
+                version = info["version"].get("Version") or info["version"].get("version")
+                if rootless is not False or not version or not store["graphRoot"] or not store["runRoot"]:
+                    raise ValueError("unexpected Podman engine identity")
+            except (KeyError, ValueError, TypeError) as error:
+                raise RuntimeError("preset did not prove its rootful Podman engine identity") from error
+            receipt.update({"rootless": False, "engine_version": version, "graph_root": store["graphRoot"], "run_root": store["runRoot"]})
         key_files = list(keys.glob("*/id_rsa"))
         if len(key_files) != 1:
             raise RuntimeError("expected exactly one generated identity")
@@ -197,6 +220,12 @@ def main():
             if resource(expected["kind"], resource_name)["metadata"]["uid"] != expected["uid"]:
                 raise RuntimeError("retry replaced a VM or disk")
         receipt["same_identity_retry"] = "passed"
+        run("workspace-reopen", devsy + ["workspace", "up", workspace, "--id", workspace, "--provider", "harvester-managed-proof", "--ide", "none", "--ide-launch", "skip", "--ssh-configure=false"], timeout=240)
+        _, reopened = helper_command("engine-container-reopen", "command", ownership_command)
+        reopened_id = re.search(r"(?m)^ENGINE_CONTAINER_ID=([a-f0-9]{12,64})$", reopened)
+        if reopened_id is None or reopened_id[1] != receipt["engine_container_id"]:
+            raise RuntimeError("saved workspace reconnect changed its engine/container identity")
+        receipt["saved_workspace_reopen"] = "passed"
         saved_key = key_files[0].with_name("identity-backup")
         key_files[0].rename(saved_key)
         try:

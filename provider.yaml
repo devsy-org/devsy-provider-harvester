@@ -57,6 +57,11 @@ options:
     description: Container runtime inside the guest. Must match the selected bootstrap profile or custom cloud-init installation.
     default: docker
     suggestions: [docker, podman]
+  HARVESTER_CONTAINER_COMMAND:
+    description: Guest engine executable. Computed from runtime/profile; the Rocky preset uses its rootful Podman wrapper. Custom sources can supply a compatible executable path.
+    hidden: true
+    cache: 0s
+    command: '${HARVESTER_PROVIDER} runtime-command; : "${HARVESTER_CONTAINER_RUNTIME}|${HARVESTER_CLOUD_INIT_PROFILE}"'
   HARVESTER_SSH_MODE:
     description: Managed generates a client-local machine key and injects its public key through cloud-init. Manual uses your existing keys or SSH agent. Managed mode needs permission to get the selected namespace.
     default: manual
@@ -91,7 +96,7 @@ agent:
   path: /opt/devsy/agent
   driver: docker
   docker:
-    path: ${HARVESTER_CONTAINER_RUNTIME}
+    path: ${HARVESTER_CONTAINER_COMMAND}
     install: false
     configureDaemon: false
   inactivityTimeout: 30m

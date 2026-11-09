@@ -469,3 +469,24 @@ func TestPinnedDeletionRejectsChangedResourcesBeforeAnyDelete(t *testing.T) {
 		})
 	}
 }
+
+func TestManagedReconnectRequiresTheResolvedAgentRuntimeCommand(t *testing.T) {
+	exe, _, _ := managedFixture(t)
+	t.Setenv("HARVESTER_CONTAINER_RUNTIME", "podman")
+	t.Setenv("HARVESTER_CLOUD_INIT_PROFILE", "rocky-9-podman-v1")
+	_, stderr, err := runLifecycleFixture(t, exe, "create")
+	if err != nil {
+		t.Fatalf("create: %s %v", stderr, err)
+	}
+	t.Setenv("HARVESTER_CLOUD_INIT_PROFILE", "")
+	_, stderr, err = runLifecycleFixture(t, exe, "create")
+	if err == nil || !strings.Contains(stderr, "original") {
+		t.Fatalf("helper restoration hid a different already-resolved agent command: %s %v", stderr, err)
+	}
+	t.Setenv("HARVESTER_CONTAINER_COMMAND", rootfulPodmanCommand)
+	t.Setenv("HARVESTER_USER_DATA_FILE", filepath.Join(t.TempDir(), "removed-creation-input"))
+	_, stderr, err = runLifecycleFixture(t, exe, "create")
+	if err != nil {
+		t.Fatalf("saved execution command could not reconnect without creation inputs: %s %v", stderr, err)
+	}
+}
