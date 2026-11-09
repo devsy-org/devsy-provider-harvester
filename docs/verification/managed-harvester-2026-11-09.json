@@ -1,0 +1,72 @@
+{
+  "date": "2026-11-09",
+  "client": "Linux amd64",
+  "source_commit": "088422be77fc28934015c36fde76cf35e8400a9d",
+  "build": "go1.26.10; go build -trimpath -buildvcs=false",
+  "tests": [
+    {
+      "runtime": "docker",
+      "profile": "ubuntu-24.04-docker-v1",
+      "runtime_command": "docker",
+      "budget": {
+        "cpu": 2,
+        "memory": "2Gi",
+        "disk": "12Gi"
+      },
+      "container_image": "docker.io/library/alpine@sha256:bc21487101ae47172509130ee1092cc273a831968d64b617776d1f69c81e42ab",
+      "devsy_version": "v1.26.0",
+      "helper_sha256": "06ad79d31227889b0fe90ab1dbde3e449b3b5765fc87426eb26f694fbea295cc",
+      "container_exec": "passed",
+      "workspace_read_write": "passed",
+      "engine_container_id": "e82f9d50569a",
+      "guest_uid": 1000,
+      "free_kib": 8162824,
+      "vm_daemon_active": true,
+      "inactivity_timeout": "30m",
+      "shutdown_configured": true,
+      "key_fingerprint": "SHA256:VOx6Kq+ogZ863Gu7EeacqqWjI3AA69Rz0T71DiZldQ0",
+      "same_identity_retry": "passed",
+      "saved_workspace_reopen": "passed",
+      "missing_key_refusal": "passed",
+      "cleanup": "VM, PVC and managed private key removed",
+      "result": "passed"
+    },
+    {
+      "runtime": "podman",
+      "profile": "rocky-9-podman-v1",
+      "runtime_command": "/usr/local/bin/devsy-podman-rootful",
+      "budget": {
+        "cpu": 2,
+        "memory": "2Gi",
+        "disk": "12Gi"
+      },
+      "container_image": "docker.io/library/alpine@sha256:bc21487101ae47172509130ee1092cc273a831968d64b617776d1f69c81e42ab",
+      "devsy_version": "v1.26.0",
+      "helper_sha256": "06ad79d31227889b0fe90ab1dbde3e449b3b5765fc87426eb26f694fbea295cc",
+      "container_exec": "passed",
+      "workspace_read_write": "passed",
+      "engine_container_id": "53ae6826cec2",
+      "guest_uid": 1000,
+      "free_kib": 9642932,
+      "vm_daemon_active": true,
+      "inactivity_timeout": "30m",
+      "shutdown_configured": true,
+      "rootless": false,
+      "engine_version": "5.8.2",
+      "graph_root": "/var/lib/containers/storage",
+      "run_root": "/run/containers/storage",
+      "key_fingerprint": "SHA256:NvzRZZ89E/mCNQLcsTxYSI2gGiYD9BPy+RJpGJayObM",
+      "same_identity_retry": "passed",
+      "saved_workspace_reopen": "passed",
+      "missing_key_refusal": "passed",
+      "cleanup": "VM, PVC and managed private key removed",
+      "result": "passed"
+    }
+  ],
+  "limits": [
+    "One task VM at a time; 2 vCPU / 2 GiB / 12 GiB.",
+    "Image-based devcontainer; Compose and build workloads not qualified by this receipt.",
+    "Windows native CI is separate; Windows-to-Harvester live mode was not run.",
+    "Daemon activity/configuration verified; timed idle shutdown was not observed."
+  ]
+}
