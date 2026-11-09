@@ -215,6 +215,9 @@ func prepareManagedSSH(ctx context.Context, c *config, create bool) error {
 			disks = append(disks, disk.Metadata)
 		}
 	}
+	if len(disks) > 1 || (len(disks) == 1 && disks[0].Name != c.VMName+"-rootdisk") {
+		return errors.New("ambiguous partial disk layout; managed bootstrap requires only its original rootdisk")
+	}
 	identity, err := managedIdentityAt(c.ManagedSSHDir, c.ManagedSlot, create && len(disks) == 0)
 	if err != nil {
 		return err
@@ -286,20 +289,56 @@ func sshConnection(ctx context.Context, c config) (config, string, error) {
 	if err != nil {
 		return c, "", fmt.Errorf("resolve managed VM identity for SSH: %w", err)
 	}
-	var vm struct {
-		Metadata metadata `json:"metadata"`
-	}
+	var vm vmManifest
 	if err := json.Unmarshal(out, &vm); err != nil {
 		return c, "", err
 	}
-	if vm.Metadata.UID == "" || vm.Metadata.Labels["devsy.sh/provider"] != "harvester" || vm.Metadata.Labels["devsy.sh/machine-id"] != c.VMName {
+	if !validResourceUID(vm.Metadata.UID) || vm.Metadata.Labels["devsy.sh/provider"] != "harvester" || vm.Metadata.Labels["devsy.sh/machine-id"] != c.VMName {
 		return c, "", errors.New("SSH target is not the owned managed VM")
 	}
 	c.CloudInitProfile = vm.Metadata.Annotations[profileAnnotation]
 	if err := restoreManagedSSH(ctx, &c, vm.Metadata); err != nil {
 		return c, "", err
 	}
+	if err := validateManagedRootDisk(ctx, c, vm.Metadata, vm.Spec.Template.Spec.Volumes); err != nil {
+		return c, "", err
+	}
 	return c, "devsy-harvester-" + vm.Metadata.UID, nil
+}
+
+func validResourceUID(uid string) bool {
+	return uid != "" && strings.IndexFunc(uid, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-')
+	}) < 0
+}
+
+func validateManagedRootDisk(ctx context.Context, c config, vm metadata, volumes []vmVolume) error {
+	if c.SSHMode != "managed" {
+		return nil
+	}
+	attached := false
+	for _, volume := range volumes {
+		if volume.Name == "rootdisk" && volume.PersistentVolumeClaim != nil && volume.PersistentVolumeClaim.ClaimName == c.VMName+"-rootdisk" {
+			attached = true
+		}
+	}
+	if !attached {
+		return errors.New("managed VM no longer has its original rootdisk attachment")
+	}
+	disk, err := ownedMetadataContext(ctx, c, "pvc", c.VMName+"-rootdisk")
+	if err != nil {
+		return err
+	}
+	if disk == nil {
+		return errors.New("managed VM's original rootdisk is missing")
+	}
+	if err := validateManagedBinding(c, *disk, false); err != nil {
+		return err
+	}
+	if vm.Annotations[managedDigestAnnotation] == "" || disk.Annotations[managedDigestAnnotation] != vm.Annotations[managedDigestAnnotation] {
+		return errors.New("managed VM and rootdisk have different original bootstrap digests")
+	}
+	return nil
 }
 
 func managedDeletionSnapshot(c *config) (map[string]string, bool, error) {

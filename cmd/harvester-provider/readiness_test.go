@@ -56,8 +56,27 @@ func TestManagedCustomProbeKeepsCustomDiagnostics(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "CUSTOM_DIAGNOSTIC") {
 		t.Fatalf("managed key ownership redacted a custom source: %v", err)
 	}
+	t.Setenv("HARVESTER_TEST_SSH_EXIT_CODE", "44")
+	err = probeGuest(context.Background(), load(), "192.0.2.10")
+	if err == nil || !strings.Contains(err.Error(), "CUSTOM_DIAGNOSTIC") {
+		t.Fatalf("managed custom engine diagnostic was discarded: %v", err)
+	}
 	if _, err := os.Stat(os.Getenv("HARVESTER_TEST_CREATED_VM")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCustomEngineFailureDiagnosticScope(t *testing.T) {
+	for _, profile := range []string{"", "ubuntu-24.04-docker-v1"} {
+		t.Run(profile, func(t *testing.T) {
+			lifecycleFixture(t)
+			t.Setenv("HARVESTER_TEST_SSH_EXIT_CODE", "44")
+			t.Setenv("HARVESTER_TEST_SSH_ERROR_OUTPUT", "CUSTOM_ENGINE_DIAGNOSTIC")
+			err := probeGuest(context.Background(), config{SSHUser: "developer", SSHPort: "22", CloudInitProfile: profile}, "192.0.2.10")
+			if err == nil || strings.Contains(err.Error(), "CUSTOM_ENGINE_DIAGNOSTIC") != (profile == "") {
+				t.Fatalf("engine error violated source diagnostic scope: %v", err)
+			}
+		})
 	}
 }
 

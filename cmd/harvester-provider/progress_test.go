@@ -148,6 +148,21 @@ func init() {
 			}
 			mustFixtureResult(io.WriteString(os.Stdout, `{"status":{"interfaces":[{"interfaceName":"docker0","ipAddress":"172.17.0.1"},{"name":"default","ipAddress":"192.0.2.10"}]}}`))
 		case strings.Contains(args, "get pvc "):
+			if file := os.Getenv("HARVESTER_TEST_CREATED_VM"); file != "" && os.Getenv("HARVESTER_TEST_EXISTING_PVC") == "" {
+				data, err := os.ReadFile(file + ".pvc")
+				if err == nil {
+					var claim struct {
+						Metadata metadata `json:"metadata"`
+					}
+					mustFixture(json.Unmarshal(data, &claim))
+					if fixtureArgs[2] == claim.Metadata.Name {
+						mustFixtureResult(os.Stdout.Write(data))
+					}
+				} else if !os.IsNotExist(err) {
+					os.Exit(2)
+				}
+				break
+			}
 			if file := os.Getenv("HARVESTER_TEST_EXISTING_PVC"); file != "" && os.Getenv("HARVESTER_TEST_PVC_LOOKUP_EMPTY") != "1" {
 				data, err := os.ReadFile(file)
 				if err != nil {
@@ -173,6 +188,11 @@ func init() {
 				os.Exit(2)
 			}
 			fmtKind, _ := object["kind"].(string)
+			if file := os.Getenv("HARVESTER_TEST_CREATED_VM"); file != "" && fmtKind == "PersistentVolumeClaim" {
+				object["metadata"].(map[string]any)["uid"] = "fixture-rootdisk-uid"
+				data := mustFixtureResult(json.Marshal(object))
+				mustFixture(os.WriteFile(file+".pvc", data, 0600))
+			}
 			if file := os.Getenv("HARVESTER_TEST_CREATED_VM"); file != "" && fmtKind == "VirtualMachine" {
 				object["metadata"].(map[string]any)["uid"] = env("HARVESTER_TEST_VM_UID", "fixture-vm-uid")
 				object["status"] = map[string]any{"ready": true, "printableStatus": "Running"}
@@ -203,6 +223,9 @@ func init() {
 		}
 	case "ssh":
 		if code := os.Getenv("HARVESTER_TEST_SSH_EXIT_CODE"); code != "" {
+			if noise := os.Getenv("HARVESTER_TEST_SSH_ERROR_OUTPUT"); noise != "" {
+				mustFixtureResult(fmt.Fprint(os.Stderr, noise))
+			}
 			n, _ := strconv.Atoi(code)
 			os.Exit(n)
 		}

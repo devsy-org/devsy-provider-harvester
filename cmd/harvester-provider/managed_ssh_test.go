@@ -57,6 +57,8 @@ func TestManagedIdentityPersistsAndIsOpenSSHReadable(t *testing.T) {
 		if err != nil || len(fields) < 2 || strings.Join(fields[:2], " ") != a.PublicKey {
 			t.Fatalf("OpenSSH cannot read generated identity: %v", err)
 		}
+	} else if os.Getenv("HARVESTER_REQUIRE_OPENSSH_TEST") == "1" {
+		t.Fatal("OpenSSH ssh-keygen is required for native key-readability qualification")
 	}
 }
 

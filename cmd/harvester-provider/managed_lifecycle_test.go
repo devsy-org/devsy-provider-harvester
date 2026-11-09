@@ -308,3 +308,163 @@ func TestManagedDeletionRetainsKeysUntilRemoteDeletionIsConfirmed(t *testing.T) 
 		})
 	}
 }
+
+func TestReviewManualDeleteRejectsManagedResources(t *testing.T) {
+	exe, state, calls := deleteLifecycleSetup(t)
+	for _, name := range []string{"machine-1", "machine-1-rootdisk", "machine-1-image", "machine-1-blankdisk"} {
+		path := filepath.Join(state, name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var obj struct {
+			Metadata metadata `json:"metadata"`
+		}
+		if err := json.Unmarshal(data, &obj); err != nil {
+			t.Fatal(err)
+		}
+		obj.Metadata.Annotations = map[string]string{managedModeAnnotation: "managed", managedFingerprintAnnotation: "original-key"}
+		data, err = json.Marshal(obj)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("HARVESTER_SSH_MODE", "manual")
+	_, stderr, err := runLifecycleFixture(t, exe, "delete")
+	if err == nil {
+		removed := 0
+		for _, event := range readDeleteEvents(t, calls) {
+			if event.Action == "delete" {
+				removed++
+			}
+		}
+		t.Fatalf("manual mode deleted %d managed resources without validating their fingerprint or preserving their mode: %s", removed, stderr)
+	}
+}
+
+func TestReviewManagedReconnectRejectsIncompatibleDisk(t *testing.T) {
+	exe, _, vmFile := managedFixture(t)
+	_, stderr, err := runLifecycleFixture(t, exe, "create")
+	if err != nil {
+		t.Fatalf("create: %s %v", stderr, err)
+	}
+	data, err := os.ReadFile(vmFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vm vmManifest
+	if err := json.Unmarshal(data, &vm); err != nil {
+		t.Fatal(err)
+	}
+	vm.Metadata.Name += "-rootdisk"
+	vm.Metadata.Annotations[managedFingerprintAnnotation] = "different-key"
+	data, err = json.Marshal(vm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	disk := filepath.Join(t.TempDir(), "disk.json")
+	if err := os.WriteFile(disk, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HARVESTER_TEST_EXISTING_PVC", disk)
+	c := load()
+	reused, err := reuseExistingVM(&c)
+	if err == nil && reused {
+		t.Fatal("reconnect accepted root disk with a different managed fingerprint")
+	}
+}
+
+func TestReviewManagedPrepareRejectsAmbiguousPartialDisks(t *testing.T) {
+	exe, _, vmFile := managedFixture(t)
+	_, stderr, err := runLifecycleFixture(t, exe, "create")
+	if err != nil {
+		t.Fatalf("create: %s %v", stderr, err)
+	}
+	data, err := os.ReadFile(vmFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vm vmManifest
+	if err := json.Unmarshal(data, &vm); err != nil {
+		t.Fatal(err)
+	}
+	state := t.TempDir()
+	for _, suffix := range []string{"-rootdisk", "-image"} {
+		meta := vm.Metadata
+		meta.Name = "managed-fixture" + suffix
+		meta.UID = "uid" + suffix
+		obj := struct {
+			Metadata metadata `json:"metadata"`
+		}{Metadata: meta}
+		data, err := json.Marshal(obj)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(state, meta.Name), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("HARVESTER_TEST_DELETE_STATE", state)
+	t.Setenv("HARVESTER_TEST_DELETE_CALLS", filepath.Join(t.TempDir(), "calls"))
+	c := load()
+	if err := prepareManagedSSH(context.Background(), &c, true); err == nil {
+		t.Fatal("managed create accepted both rootdisk and image partial disks")
+	}
+}
+
+func TestManagedConnectionRejectsAlteredVMIdentityOrRootAttachment(t *testing.T) {
+	for _, change := range []string{"uid", "root-claim"} {
+		t.Run(change, func(t *testing.T) {
+			exe, _, file := managedFixture(t)
+			_, stderr, err := runLifecycleFixture(t, exe, "create")
+			if err != nil {
+				t.Fatalf("create: %s %v", stderr, err)
+			}
+			data, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var vm vmManifest
+			if err := json.Unmarshal(data, &vm); err != nil {
+				t.Fatal(err)
+			}
+			if change == "uid" {
+				vm.Metadata.UID = "invalid uid"
+			} else {
+				vm.Spec.Template.Spec.Volumes[0].PersistentVolumeClaim.ClaimName = "another-root-disk"
+			}
+			data, err = json.Marshal(vm)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(file, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			_, stderr, err = runLifecycleFixture(t, exe, "command", "--command", "protocol-fixture")
+			if err == nil {
+				t.Fatalf("changed VM identity or disk attachment was accepted: %s", stderr)
+			}
+		})
+	}
+}
+
+func TestPinnedDeletionRejectsChangedResourcesBeforeAnyDelete(t *testing.T) {
+	for _, variable := range []string{"HARVESTER_EXPECTED_VM_UID", "HARVESTER_EXPECTED_ROOTDISK_UID"} {
+		t.Run(variable, func(t *testing.T) {
+			exe, _, calls := deleteLifecycleSetup(t)
+			t.Setenv(variable, "previous-resource-uid")
+			_, stderr, err := runLifecycleFixture(t, exe, "delete")
+			if err == nil {
+				t.Fatalf("stale target confirmation was accepted: %s", stderr)
+			}
+			for _, event := range readDeleteEvents(t, calls) {
+				if event.Action == "delete" {
+					t.Fatal("a resource was deleted before all confirmed UIDs were checked")
+				}
+			}
+		})
+	}
+}

@@ -28,7 +28,16 @@ var errEngineMissing = errors.New("selected container runtime is not installed i
 
 var errEngineAccess = errors.New("selected container runtime is not accessible to the SSH user; check its service and user permissions")
 
-type config struct{ Kubeconfig, Context, Namespace, VMName, Image, ImageNS, ImageType, StorageClass, CPU, Memory, Disk, SSHHost, SSHUser, SSHPort, SSHFlags, SSHPublicKey, UserData, UserDataFile, CloudInitTemplate, Network, CloudInitProfile, SSHMode, SSHKeyPath, ManagedSSHDir, ManagedSlot, ManagedFingerprint, ContainerRuntime string }
+type config struct {
+	Kubeconfig, Context, Namespace, VMName                      string
+	Image, ImageNS, ImageType, StorageClass                     string
+	CPU, Memory, Disk, Network                                  string
+	SSHHost, SSHUser, SSHPort, SSHFlags, SSHPublicKey           string
+	SSHMode, SSHKeyPath, ManagedSSHDir, ManagedSlot             string
+	ManagedFingerprint, ContainerRuntime                        string
+	UserData, UserDataFile, CloudInitTemplate, CloudInitProfile string
+	ExpectedVMUID, ExpectedRootDiskUID                          string
+}
 
 func env(n, fallback string) string {
 	if v := os.Getenv(n); v != "" {
@@ -38,31 +47,33 @@ func env(n, fallback string) string {
 }
 func load() config {
 	return config{
-		Kubeconfig:        env("KUBECONFIG", ""),
-		Context:           os.Getenv("HARVESTER_CONTEXT"),
-		Namespace:         env("HARVESTER_NAMESPACE", "default"),
-		VMName:            env("HARVESTER_VM_NAME", env("MACHINE_ID", "devsy-workspace")),
-		Image:             configuredImage(),
-		ImageNS:           env("HARVESTER_IMAGE_NAMESPACE", "harvester-public"),
-		ImageType:         env("HARVESTER_IMAGE_TYPE", "raw"),
-		StorageClass:      os.Getenv("HARVESTER_STORAGE_CLASS"),
-		CPU:               env("HARVESTER_CPU", "4"),
-		Memory:            env("HARVESTER_MEMORY", "8Gi"),
-		Disk:              env("HARVESTER_DISK", "40Gi"),
-		SSHHost:           os.Getenv("HARVESTER_SSH_HOST"),
-		SSHUser:           env("HARVESTER_SSH_USER", "ubuntu"),
-		SSHPort:           env("HARVESTER_SSH_PORT", "22"),
-		SSHFlags:          os.Getenv("HARVESTER_SSH_FLAGS"),
-		SSHPublicKey:      os.Getenv("HARVESTER_SSH_PUBLIC_KEY"),
-		UserData:          os.Getenv("HARVESTER_USER_DATA"),
-		UserDataFile:      os.Getenv("HARVESTER_USER_DATA_FILE"),
-		CloudInitTemplate: os.Getenv("HARVESTER_CLOUD_INIT_TEMPLATE"),
-		Network:           os.Getenv("HARVESTER_NETWORK"),
-		CloudInitProfile:  os.Getenv("HARVESTER_CLOUD_INIT_PROFILE"),
-		SSHMode:           env("HARVESTER_SSH_MODE", "manual"),
-		SSHKeyPath:        os.Getenv("HARVESTER_SSH_KEY_PATH"),
-		ManagedSSHDir:     os.Getenv("HARVESTER_MANAGED_SSH_DIR"),
-		ContainerRuntime:  env("HARVESTER_CONTAINER_RUNTIME", "docker"),
+		Kubeconfig:          env("KUBECONFIG", ""),
+		Context:             os.Getenv("HARVESTER_CONTEXT"),
+		Namespace:           env("HARVESTER_NAMESPACE", "default"),
+		VMName:              env("HARVESTER_VM_NAME", env("MACHINE_ID", "devsy-workspace")),
+		Image:               configuredImage(),
+		ImageNS:             env("HARVESTER_IMAGE_NAMESPACE", "harvester-public"),
+		ImageType:           env("HARVESTER_IMAGE_TYPE", "raw"),
+		StorageClass:        os.Getenv("HARVESTER_STORAGE_CLASS"),
+		CPU:                 env("HARVESTER_CPU", "4"),
+		Memory:              env("HARVESTER_MEMORY", "8Gi"),
+		Disk:                env("HARVESTER_DISK", "40Gi"),
+		SSHHost:             os.Getenv("HARVESTER_SSH_HOST"),
+		SSHUser:             env("HARVESTER_SSH_USER", "ubuntu"),
+		SSHPort:             env("HARVESTER_SSH_PORT", "22"),
+		SSHFlags:            os.Getenv("HARVESTER_SSH_FLAGS"),
+		SSHPublicKey:        os.Getenv("HARVESTER_SSH_PUBLIC_KEY"),
+		UserData:            os.Getenv("HARVESTER_USER_DATA"),
+		UserDataFile:        os.Getenv("HARVESTER_USER_DATA_FILE"),
+		CloudInitTemplate:   os.Getenv("HARVESTER_CLOUD_INIT_TEMPLATE"),
+		Network:             os.Getenv("HARVESTER_NETWORK"),
+		CloudInitProfile:    os.Getenv("HARVESTER_CLOUD_INIT_PROFILE"),
+		SSHMode:             env("HARVESTER_SSH_MODE", "manual"),
+		SSHKeyPath:          os.Getenv("HARVESTER_SSH_KEY_PATH"),
+		ManagedSSHDir:       os.Getenv("HARVESTER_MANAGED_SSH_DIR"),
+		ContainerRuntime:    env("HARVESTER_CONTAINER_RUNTIME", "docker"),
+		ExpectedVMUID:       os.Getenv("HARVESTER_EXPECTED_VM_UID"),
+		ExpectedRootDiskUID: os.Getenv("HARVESTER_EXPECTED_ROOTDISK_UID"),
 	}
 }
 
@@ -406,6 +417,7 @@ func apply(c config) error {
 		return err
 	}
 	if c.SSHMode == "managed" {
+		progress("Checking managed SSH namespace identity")
 		ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 		defer cancel()
 		unlock, err := managedOperation(ctx, &c)
@@ -420,9 +432,11 @@ func apply(c config) error {
 	}
 	if !reused {
 		if c.SSHMode == "managed" {
+			progress("Preparing managed SSH identity")
 			if err := prepareManagedSSH(context.Background(), &c, true); err != nil {
 				return err
 			}
+			progress("Managed SSH identity ready")
 		}
 		if err := provisionVM(c); err != nil {
 			return err
@@ -448,7 +462,14 @@ func reuseExistingVM(c *config) (bool, error) {
 	}
 	var vm struct {
 		Metadata metadata `json:"metadata"`
-		Status   struct {
+		Spec     struct {
+			Template struct {
+				Spec struct {
+					Volumes []vmVolume `json:"volumes"`
+				} `json:"spec"`
+			} `json:"template"`
+		} `json:"spec"`
+		Status struct {
 			Phase string `json:"printableStatus"`
 		} `json:"status"`
 	}
@@ -465,6 +486,9 @@ func reuseExistingVM(c *config) (bool, error) {
 	// original profile even if the saved provider configuration has changed.
 	c.CloudInitProfile = vm.Metadata.Annotations["devsy.sh/cloud-init-profile"]
 	if err := restoreManagedSSH(context.Background(), c, vm.Metadata); err != nil {
+		return false, err
+	}
+	if err := validateManagedRootDisk(context.Background(), *c, vm.Metadata, vm.Spec.Template.Spec.Volumes); err != nil {
 		return false, err
 	}
 	if c.CloudInitProfile != "" {
@@ -669,11 +693,18 @@ func probeGuest(ctx context.Context, c config, host string) error {
 	if err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) {
+			var diagnostic error
 			switch exit.ExitCode() {
 			case 43:
-				return errEngineMissing
+				diagnostic = errEngineMissing
 			case 44:
-				return errEngineAccess
+				diagnostic = errEngineAccess
+			}
+			if diagnostic != nil {
+				if c.CloudInitProfile == "" {
+					return fmt.Errorf("%w: %s: %w", diagnostic, strings.TrimSpace(string(out)), err)
+				}
+				return diagnostic
 			}
 		}
 		if c.CloudInitProfile != "" && errors.As(err, &exit) && exit.ExitCode() == 42 {
@@ -826,7 +857,11 @@ func sshExecCommand(c config, host, hostKeyAlias, command string) *exec.Cmd {
 }
 
 func ownedMetadata(c config, kind, name string) (*metadata, error) {
-	out, err := kubectl(c, "get", kind, name, "-n", c.Namespace, "-o", "json", "--ignore-not-found")
+	return ownedMetadataContext(context.Background(), c, kind, name)
+}
+
+func ownedMetadataContext(ctx context.Context, c config, kind, name string) (*metadata, error) {
+	out, err := kubectlInputContext(ctx, c, nil, "get", kind, name, "-n", c.Namespace, "-o", "json", "--ignore-not-found")
 	if err != nil {
 		return nil, err
 	}
@@ -854,6 +889,9 @@ func deleteOwnedSnapshot(c config, kind, name, endpoint string, expected *string
 	m, err := ownedMetadata(c, kind, name)
 	if err != nil || m == nil {
 		return "", err
+	}
+	if m.Annotations[managedModeAnnotation] == "managed" && c.SSHMode != "managed" {
+		return "", errors.New("managed resource requires its original managed SSH mode before deletion")
 	}
 	if expected != nil && m.UID != *expected {
 		return "", fmt.Errorf("%s %s was replaced after managed deletion began", kind, name)
@@ -920,7 +958,33 @@ func deleteMachine(c config) error {
 	if err != nil {
 		return err
 	}
+	pinned := map[string]string{c.VMName: c.ExpectedVMUID, c.VMName + "-rootdisk": c.ExpectedRootDiskUID}
+	for name, expected := range pinned {
+		if expected == "" {
+			continue
+		}
+		uid := snapshot[name]
+		if snapshot == nil {
+			kind := "pvc"
+			if name == c.VMName {
+				kind = "virtualmachine"
+			}
+			meta, err := ownedMetadata(c, kind, name)
+			if err != nil {
+				return err
+			}
+			if meta != nil {
+				uid = meta.UID
+			}
+		}
+		if uid != "" && uid != expected {
+			return fmt.Errorf("resource %s differs from the confirmed deletion UID; refusing cleanup", name)
+		}
+	}
 	deleteResource := func(kind, name, endpoint string) (string, error) {
+		if expected := pinned[name]; expected != "" {
+			return deleteOwnedSnapshot(c, kind, name, endpoint, &expected)
+		}
 		if snapshot == nil {
 			return deleteOwned(c, kind, name, endpoint)
 		}
