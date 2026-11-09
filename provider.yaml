@@ -53,6 +53,14 @@ options:
   HARVESTER_DISK:
     description: Root disk size.
     default: 40Gi
+  HARVESTER_CONTAINER_RUNTIME:
+    description: Container runtime inside the guest. Must match the selected bootstrap profile or custom cloud-init installation.
+    default: docker
+    suggestions: [docker, podman]
+  HARVESTER_SSH_MODE:
+    description: Managed generates a client-local machine key and injects its public key through cloud-init. Manual uses your existing keys or SSH agent. Managed mode needs permission to get the selected namespace.
+    default: manual
+    suggestions: [manual, managed]
   HARVESTER_SSH_HOST:
     description: Optional fixed SSH host. If omitted, Devsy discovers the VM IP from Harvester.
   HARVESTER_SSH_USER:
@@ -62,22 +70,30 @@ options:
     description: SSH port inside the VM.
     default: "22"
   HARVESTER_SSH_FLAGS:
-    description: Additional SSH flags.
+    description: Additional SSH flags. Quoted arguments and Windows backslashes are supported. Prefer HARVESTER_SSH_KEY_PATH for a manual identity file.
+  HARVESTER_SSH_KEY_PATH:
+    description: Optional client-local private-key path for manual SSH, passed as one argument even when it contains spaces. Leave empty in managed mode.
+  HARVESTER_MANAGED_SSH_DIR:
+    description: Optional managed credential directory. Defaults to .ssh/devsy-harvester in your user home, outside Devsy exports. Back it up securely; it is not shared between clients.
   HARVESTER_SSH_PUBLIC_KEY:
-    description: SSH public key to inject through cloud-init.
+    description: Public SSH key for manual-mode generated cloud-init. Managed mode generates and selects its own key.
   HARVESTER_CLOUD_INIT_PROFILE:
-    description: Opt-in Ubuntu 24.04 Docker bootstrap for a fresh Ubuntu cloud image. Requires a public SSH key; mutually exclusive with other complete cloud-init sources.
-    suggestions: [ubuntu-24.04-docker-v1]
+    description: Bootstrap preset for a matching fresh cloud image and container runtime. Managed SSH defaults to ubuntu-24.04-docker-v1 when no custom source is selected. Manual mode requires a public SSH key.
+    suggestions: [ubuntu-24.04-docker-v1, rocky-9-podman-v1]
   HARVESTER_CLOUD_INIT_TEMPLATE:
     description: Harvester cloud-init ConfigMap reference (NAMESPACE/NAME or NAME in the VM namespace). Reads data.cloudInit using this provider kubeconfig/context.
   HARVESTER_USER_DATA_FILE:
     description: Local cloud-init file path on the client running Devsy (use an absolute Windows path on Windows).
   HARVESTER_USER_DATA:
-    description: Optional complete cloud-init user-data, overriding the generated SSH setup.
+    description: Optional complete cloud-init user-data. In managed SSH mode include {{HARVESTER_SSH_PUBLIC_KEY}} where its generated public key belongs. Custom sources are never silently merged.
     password: true
 agent:
   path: /opt/devsy/agent
   driver: docker
+  docker:
+    path: ${HARVESTER_CONTAINER_RUNTIME}
+    install: false
+    configureDaemon: false
   inactivityTimeout: 30m
   exec:
     shutdown: sudo -n shutdown -h now || shutdown -h now

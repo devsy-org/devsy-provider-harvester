@@ -2,7 +2,10 @@ module github.com/devsy-org/devsy-provider-harvester
 
 go 1.23.0
 
-require k8s.io/apimachinery v0.32.10
+require (
+	golang.org/x/sys v0.35.0
+	k8s.io/apimachinery v0.32.10
+)
 
 require (
 	github.com/fxamacker/cbor/v2 v2.7.0 // indirect
