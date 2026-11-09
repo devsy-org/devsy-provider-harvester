@@ -38,7 +38,7 @@ users:
 
 This snippet inserts a key; it does not install a runtime. Set `HARVESTER_SSH_USER=developer` for this example. Your complete source must configure networking/SSH and the selected engine. Install/start the guest agent when guest IP discovery needs it. Set `HARVESTER_CONTAINER_RUNTIME` to match your installation. Advanced sources can set `HARVESTER_CONTAINER_COMMAND` to a compatible guest executable; it is a path, not a shell command line.
 
-The provider replaces only the explicit marker. It never silently merges YAML or edits a shared ConfigMap. Expanded input and compressed inline limits are checked before disk provisioning. Custom sources retain their original SSH diagnostic detail in both SSH modes. Bundled profiles redact guest output; inspect `cloud-init status --long` and `/var/log/cloud-init-output.log` inside the guest.
+The provider replaces only the explicit marker. It never silently merges YAML or edits a shared ConfigMap. Expanded input and compressed inline limits are checked before disk provisioning. Custom sources retain their original SSH diagnostic detail in both SSH modes. Bundled profiles redact guest output; inspect `sudo -n cloud-init status --long` and read `/var/log/cloud-init-output.log` with sudo inside the guest.
 
 Devsy's Docker-compatible driver selects the computed `HARVESTER_CONTAINER_COMMAND` through `agent.docker.path` and runtime autodetection. A dynamic `agent.docker.runtime` is not used because Devsy 1.26.0 does not interpolate that field.
 
