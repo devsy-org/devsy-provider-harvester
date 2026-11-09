@@ -89,6 +89,10 @@ func managedIdentityAt(root, slot string, create bool) (managedIdentity, error) 
 			return managedIdentity{}, err
 		}
 		defer func() { _ = os.Remove(file.Name()) }()
+		if err := protectManagedCreatedFile(file.Name()); err != nil {
+			_ = file.Close()
+			return managedIdentity{}, err
+		}
 		if err := pem.Encode(file, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}); err != nil {
 			_ = file.Close()
 			return managedIdentity{}, err
@@ -162,7 +166,7 @@ func lockManagedSlot(ctx context.Context, root, slot string) (func(), error) {
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+	file, err := openManagedLockFile(path)
 	if err != nil {
 		return nil, err
 	}

@@ -168,7 +168,7 @@ def main():
         if container_id is None:
             raise RuntimeError("selected runtime did not prove ownership of Devsy's actual container")
         receipt["engine_container_id"] = container_id[1]
-        _, guest = helper_command("guest-runtime", "command", "printf 'GUEST_UID=%s\\n' \"$(id -u)\"; cloud-init status; " + args.runtime + " ps --format '{{.ID}} {{.Image}}'; printf 'FREE_KIB='; df -Pk / | awk 'NR==2 {print $4}'")
+        _, guest = helper_command("guest-runtime", "command", "printf 'GUEST_UID=%s\\n' \"$(id -u)\"; sudo -n cloud-init status; " + args.runtime + " ps --format '{{.ID}} {{.Image}}'; printf 'FREE_KIB='; df -Pk / | awk 'NR==2 {print $4}'")
         guest_uid = re.search(r"(?m)^GUEST_UID=([0-9]+)$", guest)
         free_space = re.search(r"(?m)^FREE_KIB=([0-9]+)$", guest)
         if guest_uid is None or int(guest_uid[1]) == 0:
@@ -211,7 +211,7 @@ def main():
         receipt["result"], receipt["failure"] = "failed", str(error)
         save()
         try:
-            helper_command("failure-diagnostics", "command", "cloud-init status --long; sudo -n tail -80 /var/log/cloud-init-output.log; id; " + args.runtime + " info", allow_failure=True, timeout=30)
+            helper_command("failure-diagnostics", "command", "sudo -n cloud-init status --long; sudo -n tail -80 /var/log/cloud-init-output.log; id; " + args.runtime + " info", allow_failure=True, timeout=30)
         except Exception:
             receipt["failure_diagnostics"] = "guest diagnostics unavailable; inspect the launch log"
             save()

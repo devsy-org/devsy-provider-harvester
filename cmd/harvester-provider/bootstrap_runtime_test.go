@@ -75,3 +75,31 @@ func TestPodmanProbeUsesConfiguredEngine(t *testing.T) {
 		t.Fatal("readiness checked the wrong engine or missed the rootless session environment")
 	}
 }
+
+func TestBundledCloudInitStatusUsesNoninteractivePrivilege(t *testing.T) {
+	for _, profile := range []string{"ubuntu-24.04-docker-v1", "rocky-9-podman-v1"} {
+		t.Run(profile, func(t *testing.T) {
+			lifecycleFixture(t)
+			file := filepath.Join(t.TempDir(), "ssh.jsonl")
+			t.Setenv("HARVESTER_TEST_SSH_CALLS", file)
+			engine := "docker"
+			if profile == "rocky-9-podman-v1" {
+				engine = "podman"
+			}
+			if err := probeGuest(context.Background(), config{SSHUser: "developer", SSHPort: "22", CloudInitProfile: profile, ContainerRuntime: engine}, "192.0.2.10"); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var args []string
+			if err := json.Unmarshal(data, &args); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(args[len(args)-1], "sudo -n cloud-init status --wait") {
+				t.Fatal("cloud-init status can require root to read its cache on Rocky")
+			}
+		})
+	}
+}

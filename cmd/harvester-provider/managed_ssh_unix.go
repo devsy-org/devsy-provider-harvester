@@ -37,6 +37,14 @@ func checkManagedPermissions(_ string, info os.FileInfo) error {
 	return nil
 }
 
+func protectManagedCreatedFile(path string) error {
+	return checkManagedFile(path)
+}
+
+func openManagedLockFile(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+}
+
 func tryManagedLock(file *os.File) (bool, error) {
 	err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB)
 	if errors.Is(err, unix.EWOULDBLOCK) || errors.Is(err, unix.EAGAIN) {

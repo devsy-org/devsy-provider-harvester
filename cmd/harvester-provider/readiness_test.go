@@ -31,6 +31,15 @@ func TestGeneratedProbeClassifiesAuthenticationWithoutGuestOutput(t *testing.T) 
 	}
 }
 
+func TestBundledPrivilegeNotReadyIsAnActionableRetry(t *testing.T) {
+	lifecycleFixture(t)
+	t.Setenv("HARVESTER_TEST_SSH_EXIT_CODE", "45")
+	err := probeGuest(context.Background(), config{SSHUser: "developer", SSHPort: "22", CloudInitProfile: "ubuntu-24.04-docker-v1"}, "192.0.2.10")
+	if !errors.Is(err, errBootstrapPrivilege) || errors.Is(err, errBundledBootstrap) || !strings.Contains(readinessDiagnostic(err), "waiting") {
+		t.Fatalf("early sudo setup was treated as a terminal bootstrap failure: %v", err)
+	}
+}
+
 func TestProbeDistinguishesMissingAndInaccessibleEngine(t *testing.T) {
 	for _, tc := range []struct{ code, diagnostic string }{{"43", "not installed"}, {"44", "not accessible"}} {
 		t.Run(tc.code, func(t *testing.T) {

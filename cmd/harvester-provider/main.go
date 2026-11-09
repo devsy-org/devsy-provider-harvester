@@ -28,6 +28,8 @@ var errEngineMissing = errors.New("selected container runtime is not installed i
 
 var errEngineAccess = errors.New("selected container runtime is not accessible to the SSH user; check its service and user permissions")
 
+var errBootstrapPrivilege = errors.New("bundled bootstrap needs passwordless sudo to inspect cloud-init status")
+
 type config struct {
 	Kubeconfig, Context, Namespace, VMName                      string
 	Image, ImageNS, ImageType, StorageClass                     string
@@ -658,6 +660,8 @@ func readinessDiagnostic(err error) string {
 		return errEngineMissing.Error() + "; waiting for bootstrap"
 	case errors.Is(err, errEngineAccess):
 		return errEngineAccess.Error() + "; retrying"
+	case errors.Is(err, errBootstrapPrivilege):
+		return errBootstrapPrivilege.Error() + "; waiting for guest user setup"
 	case errors.Is(err, context.DeadlineExceeded):
 		return "Guest readiness probe reached its deadline; bootstrap or connectivity may still be pending"
 	default:
@@ -675,7 +679,7 @@ func probeGuest(ctx context.Context, c config, host string) error {
 	if c.CloudInitProfile != "" {
 		// A terminal bootstrap error must be visible even when Docker was never
 		// installed. Use only a reserved exit code, never guest log contents.
-		probe = "cloud-init status --wait >/dev/null 2>&1 || exit 42; " + probe + "; systemctl is-active --quiet qemu-guest-agent"
+		probe = "sudo -n true >/dev/null 2>&1 || exit 45; sudo -n cloud-init status --wait >/dev/null 2>&1 || exit 42; " + probe + "; systemctl is-active --quiet qemu-guest-agent"
 		if engine == "docker" {
 			probe += " && docker compose version >/dev/null 2>&1 && docker buildx version >/dev/null 2>&1"
 		}
@@ -699,6 +703,10 @@ func probeGuest(ctx context.Context, c config, host string) error {
 				diagnostic = errEngineMissing
 			case 44:
 				diagnostic = errEngineAccess
+			case 45:
+				if c.CloudInitProfile != "" {
+					diagnostic = errBootstrapPrivilege
+				}
 			}
 			if diagnostic != nil {
 				if c.CloudInitProfile == "" {
