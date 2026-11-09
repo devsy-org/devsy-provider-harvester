@@ -35,7 +35,11 @@ func init() {
 	name := strings.TrimSuffix(filepath.Base(os.Args[0]), ".exe")
 	switch name {
 	case "fake-kubectl":
-		args := strings.Join(os.Args[1:], " ")
+		fixtureArgs := os.Args[1:]
+		for len(fixtureArgs) >= 2 && (fixtureArgs[0] == "--kubeconfig" || fixtureArgs[0] == "--context") {
+			fixtureArgs = fixtureArgs[2:]
+		}
+		args := strings.Join(fixtureArgs, " ")
 		if state := os.Getenv("HARVESTER_TEST_DELETE_STATE"); state != "" && (strings.HasPrefix(args, "get virtualmachine ") || strings.HasPrefix(args, "get pvc ") || strings.HasPrefix(args, "delete --raw ")) {
 			deleteFixture(state, os.Args[1:])
 			os.Exit(0)
@@ -46,6 +50,15 @@ func init() {
 			mustFixture(f.Close())
 		}
 		switch {
+		case strings.HasPrefix(args, "get namespace "):
+			if os.Getenv("HARVESTER_TEST_NAMESPACE_STALL") == "1" {
+				time.Sleep(2 * time.Second)
+			}
+			if os.Getenv("HARVESTER_TEST_NAMESPACE_FAILURE") == "1" {
+				mustFixtureResult(io.WriteString(os.Stderr, "forbidden reading namespace"))
+				os.Exit(1)
+			}
+			mustFixtureResult(io.WriteString(os.Stdout, env("HARVESTER_TEST_NAMESPACE_UID", "fixture-namespace-uid")))
 		case strings.HasPrefix(args, "delete "):
 			if file := os.Getenv("HARVESTER_TEST_DELETE_CALLS"); file != "" {
 				f := mustFixtureResult(os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600))
@@ -84,12 +97,28 @@ func init() {
 			mustFixtureResult(io.WriteString(os.Stdout, `{"metadata":{"name":"test-image","namespace":"harvester-public"},"status":{"storageClassName":"test-image-storage","conditions":[{"type":"Imported","status":"True"}]}}`))
 		case strings.Contains(args, "get virtualmachine "):
 			if strings.Contains(args, "jsonpath={.metadata.uid}") {
+				if path := os.Getenv("HARVESTER_TEST_UID_STALL_AFTER_FIRST"); path != "" {
+					if _, err := os.Stat(path); err == nil {
+						time.Sleep(time.Minute)
+					}
+					mustFixture(os.WriteFile(path, []byte("requested"), 0600))
+				}
 				if os.Getenv("HARVESTER_TEST_UID_FAILURE") == "1" {
 					mustFixtureResult(os.Stderr.WriteString("forbidden reading VM identity"))
 					os.Exit(1)
 				}
 				mustFixtureResult(io.WriteString(os.Stdout, env("HARVESTER_TEST_VM_UID", "fixture-vm-uid")))
 				break
+			}
+			if file := os.Getenv("HARVESTER_TEST_CREATED_VM"); file != "" {
+				data, err := os.ReadFile(file)
+				if err == nil {
+					mustFixtureResult(os.Stdout.Write(data))
+					break
+				}
+				if !os.IsNotExist(err) {
+					os.Exit(2)
+				}
 			}
 			if strings.Contains(args, "--ignore-not-found") {
 				if failure := os.Getenv("HARVESTER_TEST_VM_LOOKUP_FAILURE"); failure != "" {
@@ -124,6 +153,13 @@ func init() {
 				if err != nil {
 					os.Exit(2)
 				}
+				var claim struct {
+					Metadata metadata `json:"metadata"`
+				}
+				mustFixture(json.Unmarshal(data, &claim))
+				if len(fixtureArgs) > 2 && fixtureArgs[2] != claim.Metadata.Name {
+					break
+				}
 				mustFixtureResult(os.Stdout.Write(data))
 			}
 		case strings.Contains(args, "get network-attachment-definition"):
@@ -137,6 +173,12 @@ func init() {
 				os.Exit(2)
 			}
 			fmtKind, _ := object["kind"].(string)
+			if file := os.Getenv("HARVESTER_TEST_CREATED_VM"); file != "" && fmtKind == "VirtualMachine" {
+				object["metadata"].(map[string]any)["uid"] = env("HARVESTER_TEST_VM_UID", "fixture-vm-uid")
+				object["status"] = map[string]any{"ready": true, "printableStatus": "Running"}
+				data := mustFixtureResult(json.Marshal(object))
+				mustFixture(os.WriteFile(file, data, 0600))
+			}
 			if file := os.Getenv("HARVESTER_TEST_EXISTING_PVC"); file != "" && fmtKind == "PersistentVolumeClaim" {
 				if strings.Contains(args, "create -f -") {
 					mustFixtureResult(os.Stderr.WriteString("Error from server (AlreadyExists): persistentvolumeclaim already exists"))
@@ -331,9 +373,10 @@ func lifecycleFixture(t *testing.T) string {
 		}
 	}
 	t.Setenv("HARVESTER_TEST_LIFECYCLE", "1")
+	t.Setenv("GORACE", os.Getenv("GORACE")+" atexit_sleep_ms=0")
 	t.Setenv("HARVESTER_KUBECTL_PATH", filepath.Join(dir, "fake-kubectl"+suffix))
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	for _, name := range []string{"KUBECONFIG", "HARVESTER_CONTEXT", "HARVESTER_SSH_HOST", "HARVESTER_SSH_FLAGS", "HARVESTER_SSH_PUBLIC_KEY", "HARVESTER_USER_DATA_FILE", "HARVESTER_CLOUD_INIT_TEMPLATE", "HARVESTER_NETWORK"} {
+	for _, name := range []string{"KUBECONFIG", "HARVESTER_CONTEXT", "HARVESTER_SSH_HOST", "HARVESTER_SSH_FLAGS", "HARVESTER_SSH_PUBLIC_KEY", "HARVESTER_USER_DATA_FILE", "HARVESTER_CLOUD_INIT_TEMPLATE", "HARVESTER_NETWORK", "HARVESTER_SSH_MODE", "HARVESTER_SSH_KEY_PATH", "HARVESTER_MANAGED_SSH_DIR", "HARVESTER_CONTAINER_RUNTIME"} {
 		t.Setenv(name, "")
 	}
 	t.Setenv("HARVESTER_IMAGE", "test-image")
