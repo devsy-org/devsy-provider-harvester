@@ -302,6 +302,10 @@ func TestBundledProbeChecksBootstrapFailureBeforeDocker(t *testing.T) {
 	if err = os.WriteFile(filepath.Join(dir, "cloud-init"), []byte("#!/bin/sh\nexit 1\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
+	sudo := "#!/bin/sh\n[ \"$1\" = -n ] || exit 99\nshift\n[ \"$1\" = true ] && exit 0\nexec \"$@\"\n"
+	if err = os.WriteFile(filepath.Join(dir, "sudo"), []byte(sudo), 0700); err != nil {
+		t.Fatal(err)
+	}
 	cmd := exec.Command("/bin/sh", "-c", args[len(args)-1])
 	cmd.Env = []string{"PATH=" + dir}
 	err = cmd.Run()

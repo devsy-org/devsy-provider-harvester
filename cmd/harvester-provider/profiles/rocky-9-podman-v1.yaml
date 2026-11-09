@@ -1,0 +1,42 @@
+#cloud-config
+hostname: {{quote .VMName}}
+manage_etc_hosts: true
+ssh_pwauth: false
+users:
+  - name: {{quote .SSHUser}}
+    lock_passwd: true
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - {{quote .SSHPublicKey}}
+write_files:
+  - path: {{quote (podmanCommand)}}
+    owner: root:root
+    permissions: '0755'
+    content: |
+{{podmanWrapper | indent 6}}
+  - path: /usr/local/sbin/devsy-podman-bootstrap
+    owner: root:root
+    permissions: '0700'
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      stage=platform
+      trap 'echo "devsy bootstrap failed at ${stage}; inspect /var/log/cloud-init-output.log" >&2' ERR
+      . /etc/os-release
+      if [[ "$ID" != rocky || "${VERSION_ID%%.*}" != 9 ]]; then
+        echo 'devsy bootstrap requires a Rocky Linux 9 cloud image' >&2
+        exit 1
+      fi
+      stage=podman-packages
+      echo "devsy bootstrap: $stage"
+      dnf -y --setopt=retries=3 install podman qemu-guest-agent sudo
+      stage=runtime-readiness
+      echo "devsy bootstrap: $stage"
+      systemctl start qemu-guest-agent
+      test "$(stat -c %u /usr/local/bin)" = 0
+      test "$(find /usr/local/bin -maxdepth 0 -perm /022 -print)" = ''
+      {{podmanCommand}} info >/dev/null
+      echo 'devsy bootstrap: complete'
+runcmd:
+  - [timeout, '--kill-after=30', '840', /usr/local/sbin/devsy-podman-bootstrap]
