@@ -14,7 +14,7 @@ write_files:
     owner: root:root
     permissions: '0755'
     content: |
-{{podmanWrapper | indent 6}}
+      {{- "\n"}}{{podmanWrapper | indent 6}}
   - path: /usr/local/sbin/devsy-podman-bootstrap
     owner: root:root
     permissions: '0700'

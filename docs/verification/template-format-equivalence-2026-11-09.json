@@ -1,0 +1,26 @@
+{
+  "baseline_head": "460d49f2b7ae79724bfac7ed71cf0112ee9325a7",
+  "change": "Indent the Go-template directive inside the YAML literal and explicitly restore its leading newline.",
+  "raw_rocky_template_yaml": {
+    "before": "parse failure at line17",
+    "after": "passes"
+  },
+  "profiles": {
+    "ubuntu-24.04-docker-v1": {
+      "rendered_sha256": "b02168bf499ce4ac6ddd6186b63f5bd51096c51fc7ba92603f1f912b72173966",
+      "bytes": 2459,
+      "byte_identical": true
+    },
+    "rocky-9-podman-v1": {
+      "rendered_sha256": "3f6b21479cff3dedb306e4771c820738f3e8b179dc2c54b772b57f6c13c08197",
+      "bytes": 2063,
+      "byte_identical": true
+    }
+  },
+  "fixture": {
+    "ssh_user": "developer",
+    "vm_name": "yaml-render-proof",
+    "public_key": "existing synthetic test fixture"
+  },
+  "integration_reuse": "No VM rerun. Both rendered cloud-init payloads are byte-identical, and no Go, runtime wrapper, dependency or provider configuration changed. Preserve the original live helper SHA and receipts as historical evidence, not a new-binary test."
+}
