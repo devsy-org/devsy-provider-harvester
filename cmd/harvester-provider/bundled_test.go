@@ -216,7 +216,7 @@ func TestBundledProfileRejectsISOBeforeProvisioning(t *testing.T) {
 	t.Setenv("HARVESTER_IMAGE_TYPE", "iso")
 	t.Setenv("HARVESTER_STORAGE_CLASS", "test-storage")
 	out, stderr, err := runLifecycleFixture(t, exe, "create")
-	if err == nil || !strings.Contains(stderr, "cloud image, not an ISO") || strings.Contains(out, "Provisioning root disk") {
+	if err == nil || !strings.Contains(stderr, "cloud image, not an ISO") || strings.Contains(stderr, "Provisioning root disk") {
 		t.Fatalf("ISO bootstrap reached resource creation: %q %q %v", out, stderr, err)
 	}
 }

@@ -56,10 +56,6 @@ func load() config {
 	}
 }
 
-func progress(message string) {
-	_, _ = fmt.Fprintln(os.Stdout, "harvester: "+message)
-}
-
 func checkNetwork(c config) error {
 	if c.Network == "" {
 		return nil
@@ -474,7 +470,7 @@ func ensurePVC(c config, pvc pvcManifest) error {
 		len(existing.Spec.AccessModes) != 1 || existing.Spec.AccessModes[0] != "ReadWriteMany" || !equalQuantity(existing.Spec.Resources.Requests["storage"], c.Disk) {
 		return fmt.Errorf("disk claim %s does not match the requested image, storage class, size or mode; refusing to modify it", pvc.Metadata.Name)
 	}
-	progress("Reusing existing disk claim " + pvc.Metadata.Name + " without changing its definition")
+	progress("Reusing existing disk claim without changing its definition", "disk", pvc.Metadata.Name)
 	return nil
 }
 
@@ -618,7 +614,7 @@ func readVMStatus(ctx context.Context, c config) (*vmStatus, error) {
 	return &vmStatus{Ready: p.Status.Ready, Phase: p.Status.PrintableStatus}, nil
 }
 func waitForVM(c config, desired string) error {
-	progress("Waiting for virtual machine to become " + desired)
+	progress("Waiting for virtual machine", "desired_state", desired)
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	return waitForVMContext(ctx, c, desired)
@@ -632,7 +628,7 @@ func waitForVMContext(ctx context.Context, c config, desired string) error {
 			lastErr = nil
 			state := statusForVM(status, false)
 			if status.Phase != lastState {
-				progress("Virtual machine state: " + status.Phase)
+				progress("Virtual machine state", "state", status.Phase)
 				lastState = status.Phase
 			}
 			if state == desired {
@@ -830,6 +826,15 @@ func main() {
 	if len(os.Args) > 1 {
 		op = os.Args[1]
 	}
+	switch op {
+	case "image-options", "images", "init", "create", "delete", "start", "stop", "status", "command":
+	default:
+		op = "unknown"
+	}
+	if err := configureDiagnostics(c, op); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	var err error
 	switch op {
 	case "image-options":
@@ -877,7 +882,7 @@ func main() {
 				fmt.Print("NotFound")
 				return
 			}
-			fmt.Fprintln(os.Stderr, e)
+			diagnosticLog.Error("Status query failed", "error", e.Error())
 			os.Exit(1)
 		}
 		var p struct {
@@ -887,7 +892,7 @@ func main() {
 			} `json:"status"`
 		}
 		if e = json.Unmarshal(out, &p); e != nil {
-			fmt.Fprintln(os.Stderr, e)
+			diagnosticLog.Error("Status response invalid", "error", e.Error())
 			os.Exit(1)
 		}
 		fmt.Print(statusForVM(&vmStatus{Ready: p.Status.Ready, Phase: p.Status.PrintableStatus}, false))
@@ -902,7 +907,7 @@ func main() {
 		os.Exit(2)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		diagnosticLog.Error("Provider operation failed", "error", err.Error())
 		os.Exit(1)
 	}
 }
