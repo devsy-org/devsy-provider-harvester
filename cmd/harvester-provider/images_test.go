@@ -224,7 +224,7 @@ func TestUnreadyImageFailsBeforeDiskProvisioning(t *testing.T) {
 	exe := imageFixture(t, unready, `{"items":[]}`)
 	t.Setenv("HARVESTER_IMAGE", "default/image-a")
 	out, stderr, err := runLifecycleFixture(t, exe, "create")
-	if err == nil || !strings.Contains(stderr, "not ready") || strings.Contains(stderr, "Provisioning root disk") {
+	if err == nil || !strings.Contains(stderr, "not ready") || strings.Contains(stderr, "Provisioning root disk") || strings.Contains(out, "Provisioning root disk") {
 		t.Fatalf("unready image reached disk provisioning: %q %q %v", out, stderr, err)
 	}
 }
