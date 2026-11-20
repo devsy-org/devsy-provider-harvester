@@ -20,12 +20,13 @@ func TestDiagnosticLevelsAndWireFormat(t *testing.T) {
 		{"trace", "trace,debug,info,warn,error"},
 		{"debug", "debug,info,warn,error"},
 		{"info", "info,warn,error"},
+		{"INFO", "info,warn,error"},
 		{"warn", "warn,error"},
 		{"error", "error"},
 	} {
 		t.Run(tc.level, func(t *testing.T) {
 			var out bytes.Buffer
-			logger, err := newDiagnosticLog(&out, tc.level, "json", []string{"canary-secret"})
+			logger, err := newDiagnosticLog(&out, tc.level, "json", nil, []string{"canary-secret"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -55,21 +56,71 @@ func TestDiagnosticLevelsAndWireFormat(t *testing.T) {
 }
 
 func TestDiagnosticFormatsAndInvalidConfiguration(t *testing.T) {
-	for _, format := range []string{"text", "plain"} {
-		var out bytes.Buffer
-		logger, err := newDiagnosticLog(&out, "", format, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		logger.Info("visible")
-		if !strings.Contains(out.String(), "msg=visible") {
-			t.Fatalf("missing text diagnostic: %q", out.String())
+	for _, tc := range []struct {
+		format string
+		json   bool
+	}{
+		{"", true}, {"json", true}, {"JSON", true}, {"auto", true}, {"AuTo", true},
+		{"text", false}, {"TeXt", false}, {"plain", false}, {"PLAIN", false},
+		{"logfmt", false}, {"LoGfMt", false},
+	} {
+		t.Run(tc.format, func(t *testing.T) {
+			var out bytes.Buffer
+			logger, err := newDiagnosticLog(&out, "InFo", tc.format, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			logger.Info("visible")
+			if tc.json {
+				var record map[string]any
+				if err := json.Unmarshal(out.Bytes(), &record); err != nil || record["msg"] != "visible" {
+					t.Fatalf("unexpected JSON diagnostic: %q (%v)", out.String(), err)
+				}
+			} else if !strings.Contains(out.String(), "msg=visible") {
+				t.Fatalf("missing text diagnostic: %q", out.String())
+			}
+		})
+	}
+	for _, tc := range []struct{ level, format, want string }{
+		{"secret-invalid", "json", "invalid DEVSY_LOG_LEVEL"},
+		{" info", "json", "invalid DEVSY_LOG_LEVEL"},
+		{"info ", "json", "invalid DEVSY_LOG_LEVEL"},
+		{"info", "secret-invalid", "invalid DEVSY_LOG_FORMAT"},
+		{"info", " json", "invalid DEVSY_LOG_FORMAT"},
+		{"info", "logfmt ", "invalid DEVSY_LOG_FORMAT"},
+		{"invalid", "invalid", "invalid DEVSY_LOG_LEVEL"},
+	} {
+		_, err := newDiagnosticLog(&bytes.Buffer{}, tc.level, tc.format, nil, nil)
+		if err == nil || err.Error() != tc.want {
+			t.Fatalf("level %q format %q: got %v, want %q", tc.level, tc.format, err, tc.want)
 		}
 	}
-	for _, tc := range []struct{ level, format string }{{"secret-invalid", "json"}, {"info", "secret-invalid"}} {
-		_, err := newDiagnosticLog(&bytes.Buffer{}, tc.level, tc.format, nil)
-		if err == nil || strings.Contains(err.Error(), "secret-invalid") {
-			t.Fatalf("invalid configuration leaked or was accepted: %v", err)
+}
+
+func TestDiagnosticSecretsAndScope(t *testing.T) {
+	var out bytes.Buffer
+	logger, err := newDiagnosticLog(&out, "", "", []string{"HARVESTER_TOKEN=environment-canary"}, []string{"abc", "first-line\nsecond-line", "four"},
+		slog.String("component", "provider"), slog.String("provider", "harvester"),
+		slog.String("operation", "create"), slog.String("machine", "vm-first-line"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger.Info("abc first-line second-line four", "operation", "spoofed",
+		"combined", "first-line\nsecond-line",
+		"detail", "https://user:password@example.com Authorization: Bearer tokenvalue",
+		"basic", "Authorization: Basic encodedvalue", "environment", "environment-canary")
+	var record map[string]any
+	if err := json.Unmarshal(out.Bytes(), &record); err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]string{
+		"component": "provider", "provider": "harvester", "operation": "create",
+		"machine": "vm-[REDACTED]", "msg": "abc [REDACTED] [REDACTED] [REDACTED]",
+		"combined": "[REDACTED]", "basic": "Authorization: Basic [REDACTED]", "environment": "[REDACTED]",
+		"detail": "https://[REDACTED]@example.com Authorization: Bearer [REDACTED]",
+	} {
+		if record[key] != want {
+			t.Errorf("%s = %v, want %q", key, record[key], want)
 		}
 	}
 }
