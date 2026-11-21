@@ -352,13 +352,38 @@ func runLifecycleFixture(t *testing.T, exe string, args ...string) (string, stri
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, exe, args...)
+	cmd.Env = lifecycleFixtureEnv(cmd.Environ())
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
 	return stdout.String(), stderr.String(), err
 }
 
+func lifecycleFixtureEnv(environ []string) []string {
+	var env []string
+	for _, entry := range environ {
+		name, _, _ := strings.Cut(entry, "=")
+		name = strings.ToUpper(name)
+		switch name {
+		case "PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "TMPDIR", "HOME", "USERPROFILE", "PATHEXT", "COMSPEC",
+			"KUBECONFIG", "DEVSY_LOG_LEVEL", "DEVSY_LOG_FORMAT", "HARVESTER_CONTEXT", "HARVESTER_KUBECTL_PATH",
+			"HARVESTER_IMAGE", "HARVESTER_IMAGE_CHOICE", "HARVESTER_IMAGE_PIN", "HARVESTER_IMAGE_SELECTION_MODE",
+			"HARVESTER_IMAGE_TYPE", "HARVESTER_IMAGE_NAMESPACE", "HARVESTER_NAMESPACE", "HARVESTER_NETWORK",
+			"HARVESTER_SSH_FLAGS", "HARVESTER_SSH_HOST", "HARVESTER_SSH_USER", "HARVESTER_DISK", "HARVESTER_STORAGE_CLASS",
+			"HARVESTER_SSH_PUBLIC_KEY", "HARVESTER_USER_DATA", "HARVESTER_USER_DATA_FILE", "HARVESTER_CLOUD_INIT_TEMPLATE",
+			"HARVESTER_VM_NAME", "HARVESTER_CLOUD_INIT_PROFILE":
+			env = append(env, entry)
+		default:
+			if strings.HasPrefix(name, "HARVESTER_TEST_") {
+				env = append(env, entry)
+			}
+		}
+	}
+	return env
+}
+
 func TestLifecycleProgressAndProtocolOutput(t *testing.T) {
+	t.Setenv("DEVSY_FIXTURE_TOKEN", "root")
 	exe := lifecycleFixture(t)
 	for _, operation := range []string{"init", "create", "start", "stop", "delete"} {
 		t.Run(operation, func(t *testing.T) {
