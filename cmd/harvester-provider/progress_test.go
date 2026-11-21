@@ -330,6 +330,8 @@ func lifecycleFixture(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
+	t.Setenv("DEVSY_LOG_LEVEL", "")
+	t.Setenv("DEVSY_LOG_FORMAT", "")
 	t.Setenv("HARVESTER_TEST_LIFECYCLE", "1")
 	t.Setenv("HARVESTER_KUBECTL_PATH", filepath.Join(dir, "fake-kubectl"+suffix))
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -350,13 +352,38 @@ func runLifecycleFixture(t *testing.T, exe string, args ...string) (string, stri
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, exe, args...)
+	cmd.Env = lifecycleFixtureEnv(cmd.Environ())
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
 	return stdout.String(), stderr.String(), err
 }
 
+func lifecycleFixtureEnv(environ []string) []string {
+	var env []string
+	for _, entry := range environ {
+		name, _, _ := strings.Cut(entry, "=")
+		name = strings.ToUpper(name)
+		switch name {
+		case "PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "TMPDIR", "HOME", "USERPROFILE", "PATHEXT", "COMSPEC",
+			"KUBECONFIG", "DEVSY_LOG_LEVEL", "DEVSY_LOG_FORMAT", "HARVESTER_CONTEXT", "HARVESTER_KUBECTL_PATH",
+			"HARVESTER_IMAGE", "HARVESTER_IMAGE_CHOICE", "HARVESTER_IMAGE_PIN", "HARVESTER_IMAGE_SELECTION_MODE",
+			"HARVESTER_IMAGE_TYPE", "HARVESTER_IMAGE_NAMESPACE", "HARVESTER_NAMESPACE", "HARVESTER_NETWORK",
+			"HARVESTER_SSH_FLAGS", "HARVESTER_SSH_HOST", "HARVESTER_SSH_USER", "HARVESTER_DISK", "HARVESTER_STORAGE_CLASS",
+			"HARVESTER_SSH_PUBLIC_KEY", "HARVESTER_USER_DATA", "HARVESTER_USER_DATA_FILE", "HARVESTER_CLOUD_INIT_TEMPLATE",
+			"HARVESTER_VM_NAME", "HARVESTER_CLOUD_INIT_PROFILE":
+			env = append(env, entry)
+		default:
+			if strings.HasPrefix(name, "HARVESTER_TEST_") {
+				env = append(env, entry)
+			}
+		}
+	}
+	return env
+}
+
 func TestLifecycleProgressAndProtocolOutput(t *testing.T) {
+	t.Setenv("DEVSY_FIXTURE_TOKEN", "root")
 	exe := lifecycleFixture(t)
 	for _, operation := range []string{"init", "create", "start", "stop", "delete"} {
 		t.Run(operation, func(t *testing.T) {
@@ -369,8 +396,12 @@ func TestLifecycleProgressAndProtocolOutput(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s failed: %v: %s", operation, err, stderr)
 			}
-			if !strings.Contains(out, "harvester:") {
-				t.Fatalf("%s emitted no lifecycle progress: %q", operation, out)
+			wantStdout := ""
+			if operation == "create" {
+				wantStdout = "PersistentVolumeClaim applied\nVirtualMachine applied\n"
+			}
+			if out != wantStdout || !strings.Contains(stderr, `"msg":`) {
+				t.Fatalf("%s has invalid progress streams: stdout=%q stderr=%q", operation, out, stderr)
 			}
 			if strings.Contains(out+stderr, "secret-fixture-must-not-be-logged") {
 				t.Fatal("cloud-init content leaked into progress output")
@@ -378,9 +409,9 @@ func TestLifecycleProgressAndProtocolOutput(t *testing.T) {
 			if operation == "create" {
 				previous := -1
 				for _, stage := range []string{"Resolving cloud-init", "Resolving VM image", "Provisioning root disk", "Creating virtual machine", "Waiting for virtual machine", "Waiting for guest IP", "Guest IP available", "SSH and Docker are ready", "Machine ready"} {
-					index := strings.Index(out, stage)
+					index := strings.Index(stderr, stage)
 					if index <= previous {
-						t.Fatalf("missing or out-of-order stage %q: %s", stage, out)
+						t.Fatalf("missing or out-of-order stage %q: %s", stage, stderr)
 					}
 					previous = index
 				}
@@ -408,8 +439,8 @@ func TestCreateProgressStopsAtFailedStage(t *testing.T) {
 	if err == nil || !strings.Contains(stderr, "image is unavailable") {
 		t.Fatalf("expected the image lookup failure: %v %q", err, stderr)
 	}
-	if !strings.Contains(out, "Resolving VM image") || strings.Contains(out, "Creating virtual machine") || strings.Contains(out, "Machine ready") {
-		t.Fatalf("progress misreported a failed create: %q", out)
+	if out != "" || !strings.Contains(stderr, "Resolving VM image") || strings.Contains(stderr, "Creating virtual machine") || strings.Contains(stderr, "Machine ready") {
+		t.Fatalf("progress misreported a failed create: stdout=%q stderr=%q", out, stderr)
 	}
 }
 
@@ -443,16 +474,16 @@ func TestInvalidNetworkFailsBeforeProvisioning(t *testing.T) {
 	exe := lifecycleFixture(t)
 	for _, network := range []string{"a/b/c", "/missing-namespace", "default/"} {
 		t.Setenv("HARVESTER_NETWORK", network)
-		out, _, err := runLifecycleFixture(t, exe, "create")
-		if err == nil || strings.Contains(out, "Provisioning root disk") {
-			t.Fatalf("invalid network %q reached provisioning: %q %v", network, out, err)
+		out, stderr, err := runLifecycleFixture(t, exe, "create")
+		if err == nil || strings.Contains(stderr, "Provisioning root disk") {
+			t.Fatalf("invalid network %q reached provisioning: %q %q %v", network, out, stderr, err)
 		}
 	}
 	t.Setenv("HARVESTER_NETWORK", "default/mgmt-untagged")
 	t.Setenv("HARVESTER_TEST_NETWORK_FAILURE", "1")
 	for _, operation := range []string{"init", "create"} {
 		out, stderr, err := runLifecycleFixture(t, exe, operation)
-		if err == nil || !strings.Contains(stderr, "network attachment not found") || strings.Contains(out, "Provisioning root disk") || strings.Contains(out, "Provider initialized") {
+		if err == nil || !strings.Contains(stderr, "network attachment not found") || strings.Contains(stderr, "Provisioning root disk") || strings.Contains(stderr, "Provider initialized") {
 			t.Fatalf("missing network was accepted for %s: %q %q %v", operation, out, stderr, err)
 		}
 	}
@@ -530,7 +561,7 @@ func TestDeleteReportsDiskFailuresAndContinuesCleanup(t *testing.T) {
 			exe, dir, calls := deleteLifecycleSetup(t)
 			t.Setenv("HARVESTER_TEST_DELETE_FAILURES", failures)
 			out, stderr, err := runLifecycleFixture(t, exe, "delete")
-			if err == nil || strings.Contains(out, "VM and PVC deletion confirmed") {
+			if err == nil || strings.Contains(stderr, "VM and PVC deletion confirmed") {
 				t.Fatalf("cleanup incorrectly succeeded: %q %q %v", out, stderr, err)
 			}
 			for _, name := range strings.Split(failures, ",") {
@@ -549,7 +580,7 @@ func TestDeleteReportsDiskFailuresAndContinuesCleanup(t *testing.T) {
 			}
 			t.Setenv("HARVESTER_TEST_DELETE_FAILURES", "")
 			out, stderr, err = runLifecycleFixture(t, exe, "delete")
-			if err != nil || !strings.Contains(out, "VM and PVC deletion confirmed") {
+			if err != nil || !strings.Contains(stderr, "VM and PVC deletion confirmed") {
 				t.Fatalf("retry failed: %q %q %v", out, stderr, err)
 			}
 			entries, err := os.ReadDir(dir)
@@ -563,7 +594,7 @@ func TestDeleteReportsDiskFailuresAndContinuesCleanup(t *testing.T) {
 func TestDeleteConfirmsVMBeforeDeletingDisks(t *testing.T) {
 	exe, _, calls := deleteLifecycleSetup(t)
 	out, stderr, err := runLifecycleFixture(t, exe, "delete")
-	if err != nil || stderr != "" || !strings.Contains(out, "VM and PVC deletion confirmed") {
+	if err != nil || out != "" || !strings.Contains(stderr, "VM and PVC deletion confirmed") {
 		t.Fatalf("expected confirmed cleanup: %q %q %v", out, stderr, err)
 	}
 	events := readDeleteEvents(t, calls)

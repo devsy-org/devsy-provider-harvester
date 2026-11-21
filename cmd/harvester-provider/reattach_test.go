@@ -67,7 +67,7 @@ func TestCreateReusesVMWithoutChangingHarvesterFields(t *testing.T) {
 	exe := lifecycleFixture(t)
 	vmFile, callsFile := existingVMFiles(t, existingVMFixture)
 	out, stderr, err := runLifecycleFixture(t, exe, "create")
-	if err != nil || stderr != "" || !strings.Contains(out, "SSH and Docker are ready") || !strings.Contains(out, "Machine ready") {
+	if err != nil || out != "" || !strings.Contains(stderr, "SSH and Docker are ready") || !strings.Contains(stderr, "Machine ready") {
 		t.Fatalf("existing VM was not checked for readiness: %q %q %v", out, stderr, err)
 	}
 	assertNoDefinitionWrites(t, vmFile, callsFile, existingVMFixture)
@@ -80,7 +80,7 @@ func TestCreateReuseDoesNotRequireCreationInputs(t *testing.T) {
 	t.Setenv("HARVESTER_USER_DATA", "")
 	t.Setenv("HARVESTER_USER_DATA_FILE", filepath.Join(t.TempDir(), "removed-cloud-init.yaml"))
 	out, stderr, err := runLifecycleFixture(t, exe, "create")
-	if err != nil || !strings.Contains(out, "Machine ready") {
+	if err != nil || !strings.Contains(stderr, "Machine ready") {
 		t.Fatalf("reattachment attempted to resolve creation inputs: %q %q %v", out, stderr, err)
 	}
 	assertNoDefinitionWrites(t, vmFile, callsFile, existingVMFixture)
@@ -101,7 +101,7 @@ func TestCreateRefusesUnsafeExistingVM(t *testing.T) {
 			vmFile, callsFile := existingVMFiles(t, tc.data)
 			t.Setenv("HARVESTER_TEST_VM_LOOKUP_FAILURE", tc.failure)
 			out, stderr, err := runLifecycleFixture(t, exe, "create")
-			if err == nil || !strings.Contains(stderr, tc.want) || strings.Contains(out, "Machine ready") {
+			if err == nil || !strings.Contains(stderr, tc.want) || strings.Contains(stderr, "Machine ready") {
 				t.Fatalf("unsafe adoption was not refused: %q %q %v", out, stderr, err)
 			}
 			assertNoDefinitionWrites(t, vmFile, callsFile, tc.data)
@@ -114,7 +114,7 @@ func TestCreateStartsStoppedVMWithoutRewritingDefinition(t *testing.T) {
 	data := strings.Replace(existingVMFixture, `"printableStatus":"Running"`, `"printableStatus":"Stopped"`, 1)
 	vmFile, callsFile := existingVMFiles(t, data)
 	out, stderr, err := runLifecycleFixture(t, exe, "create")
-	if err != nil || !strings.Contains(out, "Machine ready") {
+	if err != nil || !strings.Contains(stderr, "Machine ready") {
 		t.Fatalf("stopped VM could not be reused: %q %q %v", out, stderr, err)
 	}
 	calls := assertNoDefinitionWrites(t, vmFile, callsFile, data)
@@ -128,7 +128,7 @@ func TestCreateCannotOverwriteVMAppearingAfterLookup(t *testing.T) {
 	vmFile, _ := existingVMFiles(t, existingVMFixture)
 	t.Setenv("HARVESTER_TEST_VM_LOOKUP_EMPTY", "1")
 	out, stderr, err := runLifecycleFixture(t, exe, "create")
-	if err == nil || !strings.Contains(stderr, "AlreadyExists") || strings.Contains(out, "Machine ready") {
+	if err == nil || !strings.Contains(stderr, "AlreadyExists") || strings.Contains(stderr, "Machine ready") {
 		t.Fatalf("concurrent VM creation was not refused: %q %q %v", out, stderr, err)
 	}
 	data, readErr := os.ReadFile(vmFile)
@@ -146,7 +146,7 @@ func TestCreateCannotOverwriteDiskAppearingAfterLookup(t *testing.T) {
 	t.Setenv("HARVESTER_TEST_EXISTING_PVC", file)
 	t.Setenv("HARVESTER_TEST_PVC_LOOKUP_EMPTY", "1")
 	out, stderr, err := runLifecycleFixture(t, exe, "create")
-	if err == nil || !strings.Contains(stderr, "AlreadyExists") || strings.Contains(out, "Creating virtual machine") {
+	if err == nil || !strings.Contains(stderr, "AlreadyExists") || strings.Contains(stderr, "Creating virtual machine") {
 		t.Fatalf("concurrent disk creation was not refused: %q %q %v", out, stderr, err)
 	}
 	data, readErr := os.ReadFile(file)
@@ -179,7 +179,7 @@ func TestCreateRetriesOnlyCompatibleOwnedDisk(t *testing.T) {
 			t.Setenv("HARVESTER_IMAGE_NAMESPACE", "harvester-public")
 			t.Setenv("HARVESTER_TEST_EXISTING_PVC", file)
 			out, stderr, err := runLifecycleFixture(t, exe, "create")
-			if (err == nil) != tc.wantOK || strings.Contains(out, "Machine ready") != tc.wantOK {
+			if (err == nil) != tc.wantOK || strings.Contains(stderr, "Machine ready") != tc.wantOK {
 				t.Fatalf("unexpected partial-create recovery: %q %q %v", out, stderr, err)
 			}
 			data, readErr := os.ReadFile(file)

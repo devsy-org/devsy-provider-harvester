@@ -66,7 +66,7 @@ func TestChangedHostKeyFailsReadinessImmediately(t *testing.T) {
 	t.Setenv("HARVESTER_TEST_SSH_CALLS", file)
 	t.Setenv("HARVESTER_TEST_HOST_KEY_FAILURE", "1")
 	out, stderr, err := runLifecycleFixture(t, exe, "create")
-	if err == nil || !strings.Contains(stderr, "Host key verification failed") || strings.Contains(stderr, "timed out") || strings.Contains(out, "Machine ready") {
+	if err == nil || !strings.Contains(stderr, "Host key verification failed") || strings.Contains(stderr, "timed out") || strings.Contains(stderr, "Machine ready") {
 		t.Fatalf("host-key failure was retried or hidden: %q %q %v", out, stderr, err)
 	}
 	data, err := os.ReadFile(file)

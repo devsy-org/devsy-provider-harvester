@@ -40,6 +40,8 @@ For a fresh Ubuntu 24.04 cloud image, `HARVESTER_CLOUD_INIT_PROFILE=ubuntu-24.04
 
 The provider releases include helpers for Linux and macOS on amd64 and arm64, and Windows on amd64. Kubeconfig and SSH key paths refer to the client running Devsy.
 
+Provider diagnostics are written to standard error. `DEVSY_LOG_LEVEL` selects `trace`, `debug`, `info`, `warn`, or `error` and defaults to `info`. `DEVSY_LOG_FORMAT` selects `json`, `text`, `plain`, `auto`, or `logfmt` and defaults to `json`. `plain` uses text output, and `auto` uses JSON. Values are case insensitive and must not have surrounding whitespace. Command output remains on standard output.
+
 ## Development
 
 ```sh
