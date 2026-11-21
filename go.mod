@@ -2,7 +2,10 @@ module github.com/devsy-org/devsy-provider-harvester
 
 go 1.23.0
 
-require k8s.io/apimachinery v0.32.10
+require (
+	golang.org/x/sys v0.35.0
+	k8s.io/apimachinery v0.32.10
+)
 
 require (
 	github.com/devsy-org/devsy/logging v0.0.0-20261121002232-42213a6fbc3f

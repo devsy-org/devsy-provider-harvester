@@ -79,5 +79,17 @@ func resolveUserData(c config) (string, error) {
 	if len(data) > 65536 {
 		return "", errors.New("cloud-init user-data exceeds 64 KiB")
 	}
+	if c.SSHMode == "managed" && c.CloudInitProfile == "" {
+		if !strings.Contains(data, managedPublicKeyMarker) {
+			return "", errors.New("managed custom cloud-init requires the {{HARVESTER_SSH_PUBLIC_KEY}} marker; custom user data is never silently merged")
+		}
+		data = strings.ReplaceAll(data, managedPublicKeyMarker, c.SSHPublicKey)
+		if len(data) > 65536 {
+			return "", errors.New("expanded cloud-init user-data exceeds 64 KiB")
+		}
+		if _, err := compressedUserData(data); err != nil {
+			return "", err
+		}
+	}
 	return data, nil
 }

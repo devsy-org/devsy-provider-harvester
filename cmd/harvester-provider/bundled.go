@@ -19,20 +19,50 @@ import (
 //go:embed profiles/ubuntu-24.04-docker-v1.yaml
 var ubuntuDockerProfile string
 
-func renderBundledProfile(c config) (string, error) {
-	if c.CloudInitProfile != "ubuntu-24.04-docker-v1" {
-		return "", errors.New("HARVESTER_CLOUD_INIT_PROFILE must be ubuntu-24.04-docker-v1")
+//go:embed profiles/rocky-9-podman-v1.yaml
+var rockyPodmanProfile string
+
+type bootstrapProfile struct{ Runtime, Command, UserData string }
+
+func bootstrapProfiles() map[string]bootstrapProfile {
+	return map[string]bootstrapProfile{
+		"ubuntu-24.04-docker-v1": {Runtime: "docker", Command: "docker", UserData: ubuntuDockerProfile},
+		"rocky-9-podman-v1":      {Runtime: "podman", Command: rootfulPodmanCommand, UserData: rockyPodmanProfile},
+	}
+}
+
+func validateBundledProfile(c config, requireKey bool) (bootstrapProfile, error) {
+	profile, ok := bootstrapProfiles()[c.CloudInitProfile]
+	if !ok {
+		return bootstrapProfile{}, errors.New("HARVESTER_CLOUD_INIT_PROFILE is not a supported bundled profile")
+	}
+	if containerRuntime(c) != profile.Runtime {
+		return bootstrapProfile{}, errors.New("selected bootstrap profile requires its matching HARVESTER_CONTAINER_RUNTIME")
+	}
+	if runtimeCommand(c) != profile.Command {
+		return bootstrapProfile{}, errors.New("selected bootstrap profile requires its original runtime executable")
 	}
 	if c.SSHUser == "root" || !regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`).MatchString(c.SSHUser) {
-		return "", errors.New("bundled profile requires a valid non-root HARVESTER_SSH_USER")
+		return bootstrapProfile{}, errors.New("bundled profile requires a valid non-root HARVESTER_SSH_USER")
 	}
 	if len(c.VMName) > 63 || !regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`).MatchString(c.VMName) {
-		return "", errors.New("bundled profile requires HARVESTER_VM_NAME to be a DNS hostname of at most 63 characters")
+		return bootstrapProfile{}, errors.New("bundled profile requires HARVESTER_VM_NAME to be a DNS hostname of at most 63 characters")
 	}
-	if !validPublicKey(c.SSHPublicKey) {
-		return "", errors.New("bundled profile requires one valid Ed25519, RSA, or ECDSA HARVESTER_SSH_PUBLIC_KEY")
+	if requireKey && !validPublicKey(c.SSHPublicKey) {
+		return bootstrapProfile{}, errors.New("bundled profile requires one valid Ed25519, RSA, or ECDSA HARVESTER_SSH_PUBLIC_KEY")
 	}
-	t, err := template.New("ubuntu-docker").Funcs(template.FuncMap{"quote": strconv.Quote}).Parse(ubuntuDockerProfile)
+	return profile, nil
+}
+
+func renderBundledProfile(c config) (string, error) {
+	profile, err := validateBundledProfile(c, true)
+	if err != nil {
+		return "", err
+	}
+	t, err := template.New("bootstrap").Funcs(template.FuncMap{
+		"quote": strconv.Quote, "indent": indentGuestScript,
+		"podmanWrapper": podmanWrapperScript, "podmanCommand": func() string { return rootfulPodmanCommand },
+	}).Parse(profile.UserData)
 	if err != nil {
 		return "", errors.New("invalid embedded cloud-init profile")
 	}
@@ -105,7 +135,7 @@ func validPublicKey(key string) bool {
 }
 
 func guestReadyTimeout(c config) time.Duration {
-	if c.CloudInitProfile != "" {
+	if c.CloudInitProfile != "" || c.SSHMode == "managed" {
 		return 15 * time.Minute
 	}
 	return 90 * time.Second
@@ -117,13 +147,13 @@ func compressedUserData(data string) (string, error) {
 	var out bytes.Buffer
 	writer := gzip.NewWriter(&out)
 	if _, err := writer.Write([]byte(data)); err != nil {
-		return "", errors.New("compress bundled cloud-init profile")
+		return "", errors.New("compress cloud-init user-data")
 	}
 	if err := writer.Close(); err != nil {
-		return "", errors.New("compress bundled cloud-init profile")
+		return "", errors.New("compress cloud-init user-data")
 	}
 	if out.Len() > 2048 {
-		return "", errors.New("bundled cloud-init exceeds KubeVirt's 2 KiB compressed limit; shorten the public-key comment or use a smaller public key")
+		return "", errors.New("cloud-init exceeds KubeVirt's 2 KiB compressed limit; shorten the source or use a smaller public key")
 	}
 	return base64.StdEncoding.EncodeToString(out.Bytes()), nil
 }
