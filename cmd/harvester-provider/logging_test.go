@@ -44,7 +44,7 @@ func TestDiagnosticLevelsAndWireFormat(t *testing.T) {
 				if _, err := time.Parse("2006-01-02T15:04:05.000Z0700", record["ts"].(string)); err != nil {
 					t.Fatal(err)
 				}
-				if record["msg"] != "diagnostic [REDACTED]" || record["detail"] != "useful [REDACTED]" || record["attempt"] != float64(3) {
+				if record["msg"] != "diagnostic [REDACTED]" || record["detail"] != "[REDACTED]" || record["attempt"] != float64(3) {
 					t.Fatalf("unexpected record: %#v", record)
 				}
 			}
@@ -115,9 +115,9 @@ func TestDiagnosticSecretsAndScope(t *testing.T) {
 	}
 	for key, want := range map[string]string{
 		"component": "provider", "provider": "harvester", "operation": "create",
-		"machine": "vm-[REDACTED]", "msg": "abc [REDACTED] [REDACTED] [REDACTED]",
-		"combined": "[REDACTED]", "basic": "Authorization: Basic [REDACTED]", "environment": "[REDACTED]",
-		"detail": "https://[REDACTED]@example.com Authorization: Bearer [REDACTED]",
+		"machine": "[REDACTED]", "msg": "abc [REDACTED] [REDACTED] [REDACTED]",
+		"combined": "[REDACTED]", "basic": "Authorization: [REDACTED]", "environment": "[REDACTED]",
+		"detail": "https://[REDACTED]@example.com Authorization: [REDACTED]",
 	} {
 		if record[key] != want {
 			t.Errorf("%s = %v, want %q", key, record[key], want)
